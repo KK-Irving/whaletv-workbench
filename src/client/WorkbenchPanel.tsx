@@ -10,7 +10,7 @@
  * component state; every mutation is persisted immediately through the Host
  * saveConfig route, then re-read via loadState.
  */
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { MouseEvent } from 'react'
 import { Button, Input } from '@deepseek-ai/dsh-client-ui-primitives'
 import clsx from 'clsx'
@@ -234,6 +234,22 @@ export function WorkbenchPanel({
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
 
+  // Auto-dismiss timer for the "already up to date" notification (no log to
+  // read → 5s countdown). Cleared on manual ✕, next update start, or unmount.
+  const dismissTimerRef = useRef<number | null>(null)
+  const clearDismissTimer = useCallback(() => {
+    if (dismissTimerRef.current !== null) {
+      window.clearTimeout(dismissTimerRef.current)
+      dismissTimerRef.current = null
+    }
+  }, [])
+  const dismissResult = useCallback(() => {
+    clearDismissTimer()
+    actions.setLastResult(null)
+    actions.setUpdateLog('')
+  }, [actions, clearDismissTimer])
+  useEffect(() => () => { clearDismissTimer() }, [clearDismissTimer])
+
   const reload = useCallback(async () => {
     try {
       const next = await loadState()
@@ -245,13 +261,14 @@ export function WorkbenchPanel({
   }, [actions, loadState])
 
   const runUpdate = useCallback(async () => {
+    clearDismissTimer()
     actions.setUpdating(true)
     actions.setUpdateLog('')
     actions.setLastResult(null)
     try {
       const result = await update()
-      actions.setUpdateLog(result.output ?? '')
       if (result.changed === true) {
+        actions.setUpdateLog(result.output ?? '')
         actions.setLastResult(
           result.rebuilt === true
             ? '更新完成并已热注入，界面将自动刷新。若本次更新涉及服务端改动，请重启 dsh。'
@@ -259,7 +276,13 @@ export function WorkbenchPanel({
         )
         void reload()
       } else {
+        // No new commits — no log to read; auto-dismiss after 5s.
+        actions.setUpdateLog('')
         actions.setLastResult('已是最新版本，无需更新。')
+        dismissTimerRef.current = window.setTimeout(() => {
+          dismissTimerRef.current = null
+          actions.setLastResult(null)
+        }, 5000)
       }
     } catch (error) {
       actions.setUpdateLog(error instanceof Error ? error.message : String(error))
@@ -267,7 +290,7 @@ export function WorkbenchPanel({
     } finally {
       actions.setUpdating(false)
     }
-  }, [actions, update, reload])
+  }, [actions, update, reload, clearDismissTimer])
 
   /** Persist a whole config; on success re-read state from the Host. */
   const persistConfig = useCallback(async (next: WorkbenchConfig): Promise<boolean> => {
@@ -547,7 +570,10 @@ export function WorkbenchPanel({
 
         {(lastResult !== null || updateLog !== '') && (
           <footer className={clsx(css.footer, lastResult !== null && css.footerWithResult)}>
-            {lastResult !== null && <p className={css.result}>{lastResult}</p>}
+            <div className={css.footerHead}>
+              {lastResult !== null && <p className={css.result}>{lastResult}</p>}
+              <Button size="sm" className={css.dismiss} onClick={dismissResult} aria-label="关闭提示">✕</Button>
+            </div>
             {updateLog !== '' && <pre className={css.log}>{updateLog}</pre>}
           </footer>
         )}

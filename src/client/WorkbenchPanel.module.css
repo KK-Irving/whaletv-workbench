@@ -252,15 +252,40 @@
   padding-bottom: 4px;
 }
 
+/*
+ * Footer sizes to content by default (single-line notification ≈ toast).
+ * Only the .log block inside is scrollable — the result row with the ✕
+ * button stays anchored at the top, never scrolls out of view.
+ */
 .footer {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 10px 16px;
+  padding: 8px 16px;
   border-top: 1px solid var(--dsw-alias-border-l1);
   background: var(--dsw-alias-bg-layer-2);
-  max-height: 200px;
-  overflow-y: auto;
+  flex-shrink: 0;
+}
+
+.footerHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 24px;
+}
+
+.footerHead .result {
+  flex: 1;
+}
+
+.dismiss {
+  flex-shrink: 0;
+  width: 24px;
+  min-width: 24px;
+  height: 24px;
+  padding: 0;
+  font-size: 14px;
+  line-height: 1;
 }
 
 .footerWithResult .result {
@@ -274,8 +299,17 @@
   color: var(--dsw-alias-label-secondary);
 }
 
+/*
+ * Log has its own scroll — outside content stays put; the pre block itself
+ * scrolls when the git/pnpm output overflows the ~180px viewport.
+ */
 .log {
   margin: 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-base);
+  max-height: 180px;
+  overflow-y: auto;
   font-family: var(--dsw-font-family-mono, ui-monospace, 'Cascadia Mono', Consolas, monospace);
   font-size: 12px;
   line-height: 17px;
