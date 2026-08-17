@@ -1,0 +1,12 @@
+# Bundle patch layer for whaletv-workbench.
+#
+# Applied automatically when a profile lists this package in
+# dsh.profile.bundles (which happens on `dsh plugin --profile <name> add ...`
+# because package.json declares dsh.bundle.patch = ./cordis.patch.yml).
+#
+# The row references the package by name; Node resolution finds
+# lib/index.js through the profile's node_modules (or the maintained
+# installation fallback at $DSH_HOME/profiles/node_modules).
+- insert:
+    - id: whaletv-workbench
+      name: 'whaletv-workbench'

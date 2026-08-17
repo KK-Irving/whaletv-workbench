@@ -40,24 +40,47 @@ WhaleTV 工作台 —— DeepSeek Harness（`dsh`）的站外 Web 插件：把�
 
 ## 安装
 
-前置：Node ≥ 22、pnpm、dsh 已运行过一次（生成 `$DSH_HOME/profiles` 回退目录）。
+前置：Node ≥ 22、pnpm、dsh 已运行过一次（生成 `$DSH_HOME/profiles/web`）。
+
+### 推荐：官方 `dsh plugin` CLI（一句话）
+
+本包 `package.json` 声明了 `dsh.bundle.patch`（指向根目录 `cordis.patch.yml`），因此 `dsh plugin add` 会自动把它作为 bundle 挂到 `dsh.profile.bundles` 层栈里。
+
+**从本地目录安装**（推荐用于开发）：
 
 ```powershell
-# 在本项目目录
-pnpm install                # 安装构建工具（tsdown / lightningcss 等）
-pnpm run bundle             # 构建 Host 半 lib/index.js + 浏览器半 lib/client.js
-node scripts/install-profile.mjs web   # 写入 profile 依赖 + pnpm install + 插入 cordis.patch.yml 插件行
+# 先构建一次，让 lib/ 就绪（link: 协议下 pnpm 不会自动跑 prepare）
+pnpm install; pnpm run bundle
+# 一键安装
+dsh plugin --profile web add e:\DeepSeek\whaletv-workbench
 ```
 
-完成后刷新 `http://127.0.0.1:3080`（若 dsh web 正在运行，patch 热重载会直接挂载并自动推送新插件）。
-
-卸载：
+**从 GitHub 直装**（推荐用于用户侧）：
 
 ```powershell
-# 从 $DSH_HOME/profiles/web/cordis.patch.yml 删除 whaletv-workbench 的 insert 行
-# 从 $DSH_HOME/profiles/web/package.json 删除 whaletv-workbench 依赖，然后：
-cd $env:USERPROFILE\.dsh\profiles\web; pnpm install
+dsh plugin --profile web add github:KK-Irving/whaletv-workbench
 ```
+
+git 直装会触发本包的 `prepare` 脚本自动构建 `lib/`。首次可能被 pnpm ≥ 10 的 `allowBuilds` 拦截，按提示把 `whaletv-workbench` 加进 `$DSH_HOME/profiles/web/pnpm-workspace.yaml` 的 `allowBuilds` 后再跑一次。
+
+**一句话卸载**：
+
+```powershell
+dsh plugin --profile web remove whaletv-workbench
+```
+
+安装 / 卸载完刷新 `http://127.0.0.1:3080`；运行中的 dsh web 热加载 profile patch，自动挂载或卸载，无需重启。
+
+### 备选：自研 `install-profile.mjs`（旧版兼容）
+
+无 `dsh` CLI，或希望复用 `link-harness-deps` + 一键把 profile 装成 `link:` 协议时可用。它做的事等价于 `dsh plugin add ./checkout` + `link-harness-deps`，但走的是直接编辑 profile 的 `package.json` 与 `cordis.patch.yml`：
+
+```powershell
+pnpm install; pnpm run bundle
+node scripts/install-profile.mjs web
+```
+
+卸载：从 `$DSH_HOME/profiles/web/cordis.patch.yml` 删除对应 insert 行，从 `$DSH_HOME/profiles/web/package.json` 移除依赖后 `pnpm install`。
 
 ## 配置工作台条目
 
@@ -79,7 +102,8 @@ cd $env:USERPROFILE\.dsh\profiles\web; pnpm install
 ## 目录结构
 
 ```
-├── package.json            # dsh.client 声明（platform: web）+ 构建脚本
+├── package.json            # dsh.bundle.patch + dsh.client 声明 + 构建脚本
+├── cordis.patch.yml        # Bundle patch layer（`dsh plugin add` 自动挂载）
 ├── tsdown.config.ts        # 双面构建（Host lib + 浏览器 closure-factory bundle）
 ├── config/workbench.example.json  # 条目模板（面板保存后生成本地 workbench.json）
 ├── LICENSE                 # MIT

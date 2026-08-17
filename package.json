@@ -20,7 +20,15 @@
     "./client": "./lib/client.js",
     "./package.json": "./package.json"
   },
+  "files": [
+    "lib",
+    "config/workbench.example.json",
+    "cordis.patch.yml"
+  ],
   "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
     "client": {
       "platform": "web",
       "inject": [
@@ -34,6 +42,7 @@
     "gen:icon": "node scripts/gen-icon.mjs",
     "bundle": "node scripts/gen-icon.mjs && tsdown",
     "build": "pnpm run bundle",
+    "prepare": "pnpm run bundle",
     "smoke": "node scripts/smoke-client.mjs && node scripts/smoke-apply.mjs && node scripts/smoke-host.mjs",
     "link:harness": "node scripts/link-harness-deps.mjs",
     "install:profile": "node scripts/install-profile.mjs"
