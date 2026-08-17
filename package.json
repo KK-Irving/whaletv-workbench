@@ -3,6 +3,16 @@
   "version": "0.2.0",
   "private": true,
   "description": "WhaleTV 工作台插件：网页/文档/应用/技能一键跳转 + 点击即用的自更新，热插入 DeepSeek Harness (dsh) Web 界面",
+  "license": "MIT",
+  "author": "KK-Irving",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/KK-Irving/whaletv-workbench.git"
+  },
+  "bugs": {
+    "url": "https://github.com/KK-Irving/whaletv-workbench/issues"
+  },
+  "homepage": "https://github.com/KK-Irving/whaletv-workbench#readme",
   "type": "module",
   "main": "lib/index.js",
   "exports": {

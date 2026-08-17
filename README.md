@@ -82,6 +82,7 @@ cd $env:USERPROFILE\.dsh\profiles\web; pnpm install
 ├── package.json            # dsh.client 声明（platform: web）+ 构建脚本
 ├── tsdown.config.ts        # 双面构建（Host lib + 浏览器 closure-factory bundle）
 ├── config/workbench.example.json  # 条目模板（面板保存后生成本地 workbench.json）
+├── LICENSE                 # MIT
 ├── assets/workbench.svg    # 工作台图标（矢量，构建时内嵌）
 ├── docs/DESIGN.md          # 设计与 UI 规划（初版形态 + 路线图）
 ├── scripts/
@@ -102,3 +103,16 @@ cd $env:USERPROFILE\.dsh\profiles\web; pnpm install
 - 配置为面板可编辑的本地 JSON 文件（`config/workbench.json`）；改动立即生效，无需重建。
 - 浏览器侧更新依赖 dev 模式的 HMR（`pnpm run dev:web`）自动刷新；生产模式更新后手动刷新页面一次。
 - Host 半刻意保持轻量稳定，使绝大多数更新只需重建 client bundle；服务端变更需重启 dsh。
+
+## 安全说明
+
+静态扫描会在以下位置标注告警，均为本插件核心能力所必需，且已按安全模式实现：
+
+- **`src/index.ts` / `scripts/install-profile.mjs` 使用 `child_process`**：为「一键自更新」流水线所需（`git pull` → `pnpm install` → `pnpm run bundle` → 热注入）。全部使用 `execFile` / `execFileSync` + **数组参数** + **硬编码命令**，不拼接用户输入，无 shell 注入路径。Windows 上对 `pnpm/npm` 启用 `shell: true` 是因为它们是 `.cmd` shim，此时参数亦全部硬编码。
+- **HTTP 路由 `/whaletv/workbench/*`**：由 dsh 的 `webServer` 挂载，默认仅绑定 `127.0.0.1`（同源）；`POST /whaletv/workbench/config` 的 JSON body 只用于写 `config/workbench.json`，经白名单校验（字段白名单、id 唯一、条目/分组数量上限、512KB body 上限），不进入任何 exec 参数。
+- **`src/client/index.ts` `window.open`**：使用 `_blank` + `noopener,noreferrer`（阻断新页面对 opener 的引用）。
+- **`process.env` 读取**：仅 `DSH_HOME`（安装目录定位）与 `NODE_ENV`（构建期常量）两处，标准用法。
+
+## License
+
+MIT — 详见 [LICENSE](./LICENSE)。
