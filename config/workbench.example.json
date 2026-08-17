@@ -1,0 +1,112 @@
+{
+  "groups": [
+    {
+      "id": "web",
+      "title": "网页",
+      "items": [
+        {
+          "id": "zmind",
+          "title": "Zmind 任务管理",
+          "description": "WhaleTV 任务 / 缺陷跟踪（URL 待配置）",
+          "url": ""
+        },
+        {
+          "id": "gerrit",
+          "title": "Gerrit 代码评审",
+          "description": "whale-gerrit.zeasn.com 代码评审平台（URL 待配置）",
+          "url": ""
+        },
+        {
+          "id": "confluence",
+          "title": "Confluence 文档中心",
+          "description": "团队知识库与文档（URL 待配置）",
+          "url": ""
+        },
+        {
+          "id": "opengrok",
+          "title": "OpenGrok 源码检索",
+          "description": "AOSP / 公版代码跨项目搜索（URL 待配置）",
+          "url": ""
+        },
+        {
+          "id": "knowledge",
+          "title": "知识库平台",
+          "description": "本地三源检索与报告平台（URL 待配置）",
+          "url": ""
+        }
+      ]
+    },
+    {
+      "id": "docs",
+      "title": "文档",
+      "items": [
+        {
+          "id": "whaletv-workflow",
+          "title": "WhaleTV 开发工作流",
+          "description": "D4/X5/STB 平台开发流程文档（URL 待配置）",
+          "url": ""
+        },
+        {
+          "id": "whaletv-api",
+          "title": "WhaleTV API 参考",
+          "description": "vendor/zeasn / vendor/whale 接口说明（URL 待配置）",
+          "url": ""
+        }
+      ]
+    },
+    {
+      "id": "apps",
+      "title": "应用",
+      "items": [
+        {
+          "id": "chrome",
+          "title": "Chrome 浏览器",
+          "description": "本机应用（路径待配置，如 C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe）",
+          "path": ""
+        },
+        {
+          "id": "wechat",
+          "title": "企业微信",
+          "description": "本机应用（路径待配置，如 C:\\Program Files (x86)\\WXWork\\WXWork.exe）",
+          "path": ""
+        },
+        {
+          "id": "vscode",
+          "title": "VS Code",
+          "description": "本机应用（路径待配置）",
+          "path": ""
+        }
+      ]
+    },
+    {
+      "id": "skills",
+      "title": "技能",
+      "items": [
+        {
+          "id": "whaletv-dev-power",
+          "title": "whaletv-dev-power",
+          "description": "WhaleTV Android TV 开发工作流助手（D4/X5/STB、Zmind、Gerrit、AOSP 检索）",
+          "prompt": "使用 whaletv-dev-power 技能，帮我处理 WhaleTV 平台任务："
+        },
+        {
+          "id": "whale-gerrit",
+          "title": "whale-gerrit",
+          "description": "Gerrit 代码评审集成：查变更、看 diff、cherry-pick、推代码",
+          "prompt": "使用 whale-gerrit 技能，帮我处理 Gerrit 变更："
+        },
+        {
+          "id": "issue-resolver",
+          "title": "issue-resolver",
+          "description": "Zmind Issue 端到端解决：分析 → 修改 → 验证 → 提交 → 评审闭环",
+          "prompt": "使用 issue-resolver 技能，帮我分析并处理这个 Issue："
+        },
+        {
+          "id": "commit-message",
+          "title": "commit-message",
+          "description": "按 WhaleTV 规范生成提交信息",
+          "prompt": "使用 commit-message 技能，帮我生成提交信息："
+        }
+      ]
+    }
+  ]
+}

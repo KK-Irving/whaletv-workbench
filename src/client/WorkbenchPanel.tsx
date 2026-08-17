@@ -1,0 +1,557 @@
+/**
+ * The WhaleTV workbench dashboard, registered into `shell.overlay`: a centered
+ * panel over a click-to-close backdrop with grouped entry cards (web / docs /
+ * apps / skills), search, in-panel config editing (edit mode), and the
+ * one-click self-update flow.
+ *
+ * Pure presentation: everything arrives through the four props shares
+ * (owner → runtime, store → useStore/actions, inject → Host actions); no
+ * cordis imports, no React context. Edit-mode form drafts live in local
+ * component state; every mutation is persisted immediately through the Host
+ * saveConfig route, then re-read via loadState.
+ */
+import { useCallback, useEffect, useState } from 'react'
+import type { MouseEvent } from 'react'
+import { Button, Input } from '@deepseek-ai/dsh-client-ui-primitives'
+import clsx from 'clsx'
+import type { WorkbenchPanelProps } from './contract.ts'
+import type { WorkbenchConfig, WorkbenchGroup, WorkbenchItem } from '../shared.ts'
+import { WORKBENCH_ICON } from './icon.ts'
+import css from './WorkbenchPanel.module.css'
+
+/** The one action label each entry kind drives. */
+function actionLabel(item: WorkbenchItem): string {
+  if (item.url !== undefined && item.url !== '') return '打开网页'
+  if (item.path !== undefined && item.path !== '') return '打开'
+  if (item.prompt !== undefined && item.prompt !== '') return '在会话中使用'
+  return '未配置'
+}
+
+/** Whether an entry has any configured target. */
+function isConfigured(item: WorkbenchItem): boolean {
+  return actionLabel(item) !== '未配置'
+}
+
+/** Entry target kinds the edit form offers. */
+type TargetKind = 'url' | 'path' | 'prompt'
+
+/** Editable field draft for one entry (new or existing). */
+interface ItemFormDraft {
+  title: string
+  description: string
+  kind: TargetKind
+  value: string
+}
+
+/** Which entry is currently in form editing (null = none). */
+interface ItemEditing {
+  groupId: string
+  itemId: string | null
+  draft: ItemFormDraft
+}
+
+/** Monotonic per-page id source for new entries/groups. */
+let idCounter = 0
+function genId(prefix: string): string {
+  idCounter += 1
+  return `${prefix}-${Date.now().toString(36)}${idCounter.toString(36)}`
+}
+
+function emptyDraft(): ItemFormDraft {
+  return { title: '', description: '', kind: 'url', value: '' }
+}
+
+function draftFromItem(item: WorkbenchItem): ItemFormDraft {
+  const kind: TargetKind = item.url !== undefined ? 'url' : item.path !== undefined ? 'path' : item.prompt !== undefined ? 'prompt' : 'url'
+  return {
+    title: item.title,
+    description: item.description ?? '',
+    kind,
+    value: item.url ?? item.path ?? item.prompt ?? '',
+  }
+}
+
+/** Build a config item from the form draft; blank optional fields are dropped. */
+function itemFromDraft(id: string, draft: ItemFormDraft): WorkbenchItem {
+  const item: WorkbenchItem = { id, title: draft.title.trim() }
+  const description = draft.description.trim()
+  const value = draft.value.trim()
+  if (description !== '') item.description = description
+  if (value !== '') {
+    if (draft.kind === 'url') item.url = value
+    else if (draft.kind === 'path') item.path = value
+    else item.prompt = value
+  }
+  return item
+}
+
+/** Placeholder for the target value input, per kind. */
+function kindPlaceholder(kind: TargetKind): string {
+  if (kind === 'url') return 'https://…'
+  if (kind === 'path') return 'C:\\path\\to\\app.exe'
+  return '提示词文本…'
+}
+
+/** Inline entry form (used for both new and existing entries). */
+function ItemForm(props: {
+  draft: ItemFormDraft
+  saving: boolean
+  onChange: (patch: Partial<ItemFormDraft>) => void
+  onSave: () => void
+  onCancel: () => void
+}) {
+  const { draft, saving, onChange, onSave, onCancel } = props
+  return (
+    <div className={css.form}>
+      <Input
+        placeholder="名称（必填）"
+        value={draft.title}
+        onChange={event => { onChange({ title: event.target.value }) }}
+      />
+      <Input
+        placeholder="描述（可选）"
+        value={draft.description}
+        onChange={event => { onChange({ description: event.target.value }) }}
+      />
+      <div className={css.formRow}>
+        <select
+          className={css.kindSelect}
+          value={draft.kind}
+          onChange={event => { onChange({ kind: event.target.value as TargetKind }) }}
+          aria-label="目标类型"
+        >
+          <option value="url">网页 URL</option>
+          <option value="path">本机路径</option>
+          <option value="prompt">技能提示词</option>
+        </select>
+        <Input
+          placeholder={kindPlaceholder(draft.kind)}
+          value={draft.value}
+          onChange={event => { onChange({ value: event.target.value }) }}
+        />
+      </div>
+      <div className={css.formActions}>
+        <Button size="sm" variant="primary" onClick={onSave} disabled={saving}>保存</Button>
+        <Button size="sm" onClick={onCancel} disabled={saving}>取消</Button>
+      </div>
+    </div>
+  )
+}
+
+/** One entry card: title, description, and its kind-specific actions (or the inline form in edit mode). */
+function ItemCard(props: {
+  item: WorkbenchItem
+  editMode: boolean
+  editing: boolean
+  draft: ItemFormDraft
+  saving: boolean
+  onDraftChange: (patch: Partial<ItemFormDraft>) => void
+  onSaveDraft: () => void
+  onCancelDraft: () => void
+  onEdit: () => void
+  onDelete: () => void
+  onOpenUrl: (url: string) => void
+  onOpenPath: (path: string) => void
+  onUseSkill: (prompt: string) => void
+  onCopy: (prompt: string) => void
+}) {
+  const {
+    item, editMode, editing, draft, saving,
+    onDraftChange, onSaveDraft, onCancelDraft, onEdit, onDelete,
+    onOpenUrl, onOpenPath, onUseSkill, onCopy,
+  } = props
+  const configured = isConfigured(item)
+
+  const head = (
+    <div className={css.itemHead}>
+      <span className={css.itemTitle}>{item.title}</span>
+      {!configured && <span className={css.badge}>待配置</span>}
+    </div>
+  )
+  if (editing) {
+    return (
+      <div className={css.item}>
+        {head}
+        <ItemForm draft={draft} saving={saving} onChange={onDraftChange} onSave={onSaveDraft} onCancel={onCancelDraft} />
+      </div>
+    )
+  }
+  return (
+    <div className={css.item}>
+      {head}
+      {item.description !== undefined && item.description !== ''
+        && <p className={css.itemDesc}>{item.description}</p>}
+      {editMode ? (
+        <div className={css.itemActions}>
+          <Button size="sm" variant="outline" onClick={onEdit} disabled={saving}>编辑</Button>
+          <Button size="sm" variant="outline" className={css.danger} onClick={onDelete} disabled={saving}>删除</Button>
+        </div>
+      ) : (
+        <div className={css.itemActions}>
+          {item.url !== undefined && item.url !== '' && (
+            <Button size="sm" variant="outline" onClick={() => { onOpenUrl(item.url!) }}>{actionLabel(item)}</Button>
+          )}
+          {item.path !== undefined && item.path !== '' && (
+            <Button size="sm" variant="outline" onClick={() => { onOpenPath(item.path!) }}>{actionLabel(item)}</Button>
+          )}
+          {item.prompt !== undefined && item.prompt !== '' && (
+            <>
+              <Button size="sm" variant="outline" onClick={() => { onUseSkill(item.prompt!) }}>{actionLabel(item)}</Button>
+              <Button size="sm" onClick={() => { onCopy(item.prompt!) }}>复制提示词</Button>
+            </>
+          )}
+          {!configured && <Button size="sm" disabled>{actionLabel(item)}</Button>}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** The workbench dashboard (see module doc). */
+export function WorkbenchPanel({
+  useStore,
+  actions,
+  openUrl,
+  openPath,
+  startSession,
+  copyPrompt,
+  loadState,
+  saveConfig,
+  update,
+}: WorkbenchPanelProps) {
+  const open = useStore(s => s.open)
+  const search = useStore(s => s.search)
+  const state = useStore(s => s.state)
+  const loadError = useStore(s => s.loadError)
+  const updating = useStore(s => s.updating)
+  const updateLog = useStore(s => s.updateLog)
+  const lastResult = useStore(s => s.lastResult)
+
+  const [editMode, setEditMode] = useState(false)
+  const [editing, setEditing] = useState<ItemEditing | null>(null)
+  const [groupTitleEdit, setGroupTitleEdit] = useState<string | null>(null)
+  const [groupTitleDraft, setGroupTitleDraft] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
+
+  const reload = useCallback(async () => {
+    try {
+      const next = await loadState()
+      actions.setState(next)
+      actions.setLoadError(null)
+    } catch (error) {
+      actions.setLoadError(error instanceof Error ? error.message : String(error))
+    }
+  }, [actions, loadState])
+
+  const runUpdate = useCallback(async () => {
+    actions.setUpdating(true)
+    actions.setUpdateLog('')
+    actions.setLastResult(null)
+    try {
+      const result = await update()
+      actions.setUpdateLog(result.output ?? '')
+      if (result.changed === true) {
+        actions.setLastResult(
+          result.rebuilt === true
+            ? '更新完成并已热注入，界面将自动刷新。若本次更新涉及服务端改动，请重启 dsh。'
+            : '已拉取到最新提交（无需重建）。',
+        )
+        void reload()
+      } else {
+        actions.setLastResult('已是最新版本，无需更新。')
+      }
+    } catch (error) {
+      actions.setUpdateLog(error instanceof Error ? error.message : String(error))
+      actions.setLastResult('更新失败，详见下方日志。')
+    } finally {
+      actions.setUpdating(false)
+    }
+  }, [actions, update, reload])
+
+  /** Persist a whole config; on success re-read state from the Host. */
+  const persistConfig = useCallback(async (next: WorkbenchConfig): Promise<boolean> => {
+    setSaving(true)
+    setSaveError(null)
+    try {
+      await saveConfig(next)
+      await reload()
+      return true
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : String(error))
+      return false
+    } finally {
+      setSaving(false)
+    }
+  }, [actions, saveConfig, reload])
+
+  const toggleEditMode = useCallback(() => {
+    setEditMode(mode => {
+      if (mode) {
+        setEditing(null)
+        setGroupTitleEdit(null)
+        setSaveError(null)
+      }
+      return !mode
+    })
+  }, [])
+
+  const startAddItem = (groupId: string): void => {
+    setEditing({ groupId, itemId: null, draft: emptyDraft() })
+  }
+  const startEditItem = (groupId: string, item: WorkbenchItem): void => {
+    setEditing({ groupId, itemId: item.id, draft: draftFromItem(item) })
+  }
+  const cancelDraft = (): void => { setEditing(null) }
+
+  const submitDraft = async (): Promise<void> => {
+    if (state === null || editing === null) return
+    const { groupId, itemId, draft } = editing
+    if (draft.title.trim() === '') {
+      setSaveError('条目名称不能为空')
+      return
+    }
+    const next: WorkbenchConfig = {
+      groups: state.config.groups.map(group => {
+        if (group.id !== groupId) return group
+        const items = itemId === null
+          ? [...group.items, itemFromDraft(genId('item'), draft)]
+          : group.items.map(item => (item.id === itemId ? itemFromDraft(itemId, draft) : item))
+        return { ...group, items }
+      }),
+    }
+    if (await persistConfig(next)) setEditing(null)
+  }
+
+  const deleteItem = async (groupId: string, item: WorkbenchItem): Promise<void> => {
+    if (state === null) return
+    if (!window.confirm(`删除条目「${item.title}」？`)) return
+    const next: WorkbenchConfig = {
+      groups: state.config.groups.map(group => (
+        group.id !== groupId ? group : { ...group, items: group.items.filter(i => i.id !== item.id) }
+      )),
+    }
+    await persistConfig(next)
+  }
+
+  const startRenameGroup = (group: WorkbenchGroup): void => {
+    setGroupTitleEdit(group.id)
+    setGroupTitleDraft(group.title)
+  }
+  const submitRenameGroup = async (groupId: string): Promise<void> => {
+    if (state === null) return
+    const title = groupTitleDraft.trim()
+    if (title === '') {
+      setSaveError('分组名称不能为空')
+      return
+    }
+    const next: WorkbenchConfig = {
+      groups: state.config.groups.map(group => (group.id === groupId ? { ...group, title } : group)),
+    }
+    if (await persistConfig(next)) {
+      setGroupTitleEdit(null)
+      setGroupTitleDraft('')
+    }
+  }
+  const deleteGroup = async (group: WorkbenchGroup): Promise<void> => {
+    if (state === null) return
+    if (!window.confirm(`删除分组「${group.title}」及其 ${group.items.length} 个条目？`)) return
+    const next: WorkbenchConfig = { groups: state.config.groups.filter(g => g.id !== group.id) }
+    if (await persistConfig(next)) {
+      if (editing !== null && editing.groupId === group.id) setEditing(null)
+      if (groupTitleEdit === group.id) {
+        setGroupTitleEdit(null)
+        setGroupTitleDraft('')
+      }
+    }
+  }
+  const addGroup = async (): Promise<void> => {
+    if (state === null) return
+    const group: WorkbenchGroup = { id: genId('group'), title: '新分组', items: [] }
+    const next: WorkbenchConfig = { groups: [...state.config.groups, group] }
+    if (await persistConfig(next)) startRenameGroup(group)
+  }
+
+  // Load state when the panel opens; Esc and backdrop click close it.
+  useEffect(() => {
+    if (open) void reload()
+  }, [open, reload])
+  useEffect(() => {
+    if (!open) return
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') actions.setOpen(false)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => { window.removeEventListener('keydown', onKeyDown) }
+  }, [open, actions])
+
+  const handleOpenPath = async (path: string): Promise<void> => {
+    try {
+      await openPath(path)
+    } catch (error) {
+      actions.setLoadError(error instanceof Error ? error.message : String(error))
+    }
+  }
+  const handleCopy = async (prompt: string): Promise<void> => {
+    try {
+      await copyPrompt(prompt)
+    } catch (error) {
+      actions.setLoadError(error instanceof Error ? error.message : String(error))
+    }
+  }
+  const handleUseSkill = async (prompt: string): Promise<void> => {
+    await handleCopy(prompt)
+    startSession()
+  }
+  const onBackdrop = (event: MouseEvent<HTMLDivElement>): void => {
+    if (event.target === event.currentTarget) actions.setOpen(false)
+  }
+
+  if (!open) return null
+
+  const query = search.trim().toLowerCase()
+  const groups = (state?.config.groups ?? []).map(group => ({
+    ...group,
+    items: query === ''
+      ? group.items
+      : group.items.filter(item =>
+        item.title.toLowerCase().includes(query)
+        || (item.description ?? '').toLowerCase().includes(query)),
+  })).filter(group => group.items.length > 0)
+
+  return (
+    <div className={css.backdrop} onClick={onBackdrop} data-whaletv-workbench>
+      <section className={css.panel} aria-label="WhaleTV 工作台">
+        <header className={css.header}>
+          <img src={WORKBENCH_ICON} alt="" className={css.icon} />
+          <h1 className={css.title}>WhaleTV 工作台</h1>
+          <span className={css.version}>v{state?.version ?? '…'}</span>
+          <span className={css.spacer} />
+          {state?.git.configured === true && (
+            <span className={css.git} title={state.git.remote}>
+              {state.git.branch}@{state.git.head}
+            </span>
+          )}
+          <Button size="sm" onClick={() => { void reload() }} disabled={updating || saving}>刷新</Button>
+          <Button size="sm" variant={editMode ? 'primary' : 'outline'} onClick={toggleEditMode} disabled={updating || saving}>
+            {editMode ? '完成' : '编辑'}
+          </Button>
+          <Button size="sm" variant="primary" onClick={() => { void runUpdate() }} disabled={updating || saving}>
+            {updating ? '更新中…' : '更新'}
+          </Button>
+          <Button size="sm" onClick={() => { actions.setOpen(false) }} aria-label="关闭工作台">✕</Button>
+        </header>
+
+        {loadError !== null && (
+          <div className={css.errorBanner} role="alert">
+            {loadError}
+            <Button size="sm" onClick={() => { void reload() }}>重试</Button>
+          </div>
+        )}
+        {saveError !== null && (
+          <div className={css.errorBanner} role="alert">
+            {saveError}
+            <Button size="sm" onClick={() => { setSaveError(null) }}>知道了</Button>
+          </div>
+        )}
+
+        <div className={css.search}>
+          <Input
+            placeholder="搜索网页 / 文档 / 应用 / 技能…"
+            value={search}
+            onChange={event => { actions.setSearch(event.target.value) }}
+          />
+        </div>
+
+        <div className={css.body}>
+          {state === null && loadError === null && <p className={css.hint}>正在加载工作台配置…</p>}
+          {state !== null && groups.length === 0 && (
+            <p className={css.hint}>
+              {query === ''
+                ? (editMode ? '暂无条目：点击下方「+ 新建分组」开始添加。' : '暂无条目：点击右上角「编辑」添加。')
+                : '没有匹配的条目。'}
+            </p>
+          )}
+          {groups.map(group => (
+            <section key={group.id} className={css.group}>
+              {editMode && groupTitleEdit === group.id ? (
+                <div className={css.groupTitleRow}>
+                  <Input
+                    placeholder="分组名称"
+                    value={groupTitleDraft}
+                    onChange={event => { setGroupTitleDraft(event.target.value) }}
+                    aria-label="分组名称"
+                  />
+                  <Button size="sm" variant="primary" onClick={() => { void submitRenameGroup(group.id) }} disabled={saving}>保存</Button>
+                  <Button size="sm" onClick={() => { setGroupTitleEdit(null) }} disabled={saving}>取消</Button>
+                </div>
+              ) : (
+                <div className={css.groupHead}>
+                  <h2 className={css.groupTitle}>{group.title}</h2>
+                  {editMode && (
+                    <span className={css.groupTools}>
+                      <Button size="sm" variant="outline" onClick={() => { startRenameGroup(group) }} disabled={saving}>重命名</Button>
+                      <Button size="sm" variant="outline" onClick={() => { startAddItem(group.id) }} disabled={saving}>+ 条目</Button>
+                      <Button size="sm" variant="outline" className={css.danger} onClick={() => { void deleteGroup(group) }} disabled={saving}>删除分组</Button>
+                    </span>
+                  )}
+                </div>
+              )}
+              <div className={css.grid}>
+                {group.items.map(item => (
+                  <ItemCard
+                    key={item.id}
+                    item={item}
+                    editMode={editMode}
+                    editing={editMode && editing !== null && editing.groupId === group.id && editing.itemId === item.id}
+                    draft={editing?.draft ?? emptyDraft()}
+                    saving={saving}
+                    onDraftChange={patch => {
+                      setEditing(prev => prev === null ? prev : { ...prev, draft: { ...prev.draft, ...patch } })
+                    }}
+                    onSaveDraft={() => { void submitDraft() }}
+                    onCancelDraft={cancelDraft}
+                    onEdit={() => { startEditItem(group.id, item) }}
+                    onDelete={() => { void deleteItem(group.id, item) }}
+                    onOpenUrl={url => { openUrl(url) }}
+                    onOpenPath={path => { void handleOpenPath(path) }}
+                    onUseSkill={prompt => { void handleUseSkill(prompt) }}
+                    onCopy={prompt => { void handleCopy(prompt) }}
+                  />
+                ))}
+                {editMode && editing !== null && editing.groupId === group.id && editing.itemId === null && (
+                  <div className={css.item}>
+                    <div className={css.itemHead}>
+                      <span className={css.itemTitle}>新条目</span>
+                    </div>
+                    <ItemForm
+                      draft={editing.draft}
+                      saving={saving}
+                      onChange={patch => {
+                        setEditing(prev => prev === null ? prev : { ...prev, draft: { ...prev.draft, ...patch } })
+                      }}
+                      onSave={() => { void submitDraft() }}
+                      onCancel={cancelDraft}
+                    />
+                  </div>
+                )}
+              </div>
+            </section>
+          ))}
+          {editMode && state !== null && (
+            <div className={css.editBar}>
+              <Button size="sm" variant="outline" onClick={() => { void addGroup() }} disabled={saving}>+ 新建分组</Button>
+            </div>
+          )}
+        </div>
+
+        {(lastResult !== null || updateLog !== '') && (
+          <footer className={clsx(css.footer, lastResult !== null && css.footerWithResult)}>
+            {lastResult !== null && <p className={css.result}>{lastResult}</p>}
+            {updateLog !== '' && <pre className={css.log}>{updateLog}</pre>}
+          </footer>
+        )}
+      </section>
+    </div>
+  )
+}

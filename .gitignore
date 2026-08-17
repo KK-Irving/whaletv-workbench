@@ -1,0 +1,19 @@
+# Dependencies / build output
+node_modules/
+.pnpm-store/
+lib/
+*.tsbuildinfo
+
+# Local user config (the panel writes it; template lives in config/workbench.example.json)
+config/workbench.json
+
+# Runtime / tool scratch
+.workspace/
+report-output/
+*.log
+.DS_Store
+Thumbs.db
+
+# Editors / IDEs
+.idea/
+.vscode/

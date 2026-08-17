@@ -1,0 +1,50 @@
+{
+  "name": "whaletv-workbench",
+  "version": "0.2.0",
+  "private": true,
+  "description": "WhaleTV 工作台插件：网页/文档/应用/技能一键跳转 + 点击即用的自更新，热插入 DeepSeek Harness (dsh) Web 界面",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-ui-sidebar",
+        "@deepseek-ai/dsh-client-ui-layout"
+      ]
+    }
+  },
+  "scripts": {
+    "gen:icon": "node scripts/gen-icon.mjs",
+    "bundle": "node scripts/gen-icon.mjs && tsdown",
+    "build": "pnpm run bundle",
+    "smoke": "node scripts/smoke-client.mjs && node scripts/smoke-apply.mjs && node scripts/smoke-host.mjs",
+    "link:harness": "node scripts/link-harness-deps.mjs",
+    "install:profile": "node scripts/install-profile.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/react": "~18.3.1",
+    "clsx": "^2.0.0",
+    "lightningcss": "^1.32.0",
+    "tsdown": "^0.22.2",
+    "typescript": "^5.7.0"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "*",
+    "@deepseek-ai/dsh-client-modules": "*",
+    "@deepseek-ai/dsh-client-runtime": "*",
+    "@deepseek-ai/dsh-client-ui-layout": "*",
+    "@deepseek-ai/dsh-client-ui-primitives": "*",
+    "@deepseek-ai/dsh-client-ui-sidebar": "*",
+    "@deepseek-ai/dsh-client-web-react": "*",
+    "@deepseek-ai/dsh-host-webserver": "*",
+    "react": "^18.2.0"
+  }
+}
