@@ -4,7 +4,10 @@ node_modules/
 lib/
 *.tsbuildinfo
 
-# Local user config (the panel writes it; template lives in config/workbench.example.json)
+# Local user config: since v0.3 the panel writes to
+# $DSH_HOME/whaletv-workbench/workbench.json (outside this repo). The old
+# in-tree path is kept here so an existing checkout is not surprised by the
+# leftover file after migration.
 config/workbench.json
 
 # Runtime / tool scratch

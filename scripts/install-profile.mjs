@@ -30,10 +30,22 @@ const PATCH_PATH = join(PROFILE_DIR, 'cordis.patch.yml')
 
 const INSERT_ROW = `- insert:\n    - id: ${PACKAGE_NAME}\n      name: '${PACKAGE_NAME}'\n`
 
+/**
+ * Drop pnpm 11's noisy `NPM_CONFIG_*` env vars before spawning; npm 11 warns
+ * about them as unknown and floods this script's captured output otherwise.
+ * pnpm subprocesses still honor the setting through their own config sources.
+ */
+function sanitizedEnv() {
+  const env = { ...process.env }
+  delete env.NPM_CONFIG_MANAGE_PACKAGE_MANAGER_VERSIONS
+  delete env.npm_config_manage_package_manager_versions
+  return env
+}
+
 /** Resolve spawn options for this platform (npm/pnpm are .cmd shims on Windows). */
 function spawnOptions(command) {
   const needsShell = process.platform === 'win32' && (command === 'pnpm' || command === 'npm')
-  return { cwd: undefined, stdio: 'inherit', windowsHide: true, shell: needsShell }
+  return { cwd: undefined, stdio: 'inherit', windowsHide: true, shell: needsShell, env: sanitizedEnv() }
 }
 
 function run(command, args, cwd) {

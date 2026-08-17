@@ -5,7 +5,7 @@
  * both surfaces read and mutate the same live instance.
  */
 import { defineStore, type EngineStoreHandle } from '@deepseek-ai/dsh-client-runtime/client'
-import type { WorkbenchState } from '../shared.ts'
+import type { WorkbenchSkillList, WorkbenchState } from '../shared.ts'
 
 /** Workbench store state. */
 export type WorkbenchStoreState = {
@@ -23,6 +23,10 @@ export type WorkbenchStoreState = {
   updateLog: string
   /** Human summary of the last update outcome. */
   lastResult: string | null
+  /** Current skill catalog projection; null until first load. */
+  skills: WorkbenchSkillList | null
+  /** True while the skills catalog is being refreshed. */
+  skillsLoading: boolean
 }
 
 /** Workbench store actions (draft mutators). */
@@ -35,6 +39,8 @@ export type WorkbenchStoreActions = {
   setUpdating: (d: WorkbenchStoreState, updating: boolean) => void
   setUpdateLog: (d: WorkbenchStoreState, log: string) => void
   setLastResult: (d: WorkbenchStoreState, result: string | null) => void
+  setSkills: (d: WorkbenchStoreState, skills: WorkbenchSkillList | null) => void
+  setSkillsLoading: (d: WorkbenchStoreState, loading: boolean) => void
 }
 
 /**
@@ -51,6 +57,8 @@ export function createWorkbenchStore(): EngineStoreHandle<WorkbenchStoreState, W
       updating: false,
       updateLog: '',
       lastResult: null,
+      skills: null,
+      skillsLoading: false,
     }),
     actions: {
       setOpen: (d, open: boolean) => { d.open = open },
@@ -61,6 +69,8 @@ export function createWorkbenchStore(): EngineStoreHandle<WorkbenchStoreState, W
       setUpdating: (d, updating: boolean) => { d.updating = updating },
       setUpdateLog: (d, log: string) => { d.updateLog = log },
       setLastResult: (d, result: string | null) => { d.lastResult = result },
+      setSkills: (d, skills: WorkbenchSkillList | null) => { d.skills = skills },
+      setSkillsLoading: (d, loading: boolean) => { d.skillsLoading = loading },
     },
   })
 }

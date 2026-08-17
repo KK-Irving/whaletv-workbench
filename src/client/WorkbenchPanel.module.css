@@ -317,3 +317,108 @@
   word-break: break-all;
   color: var(--dsw-alias-label-tertiary);
 }
+
+/*
+ * "工作台技能" section — rendered below the user-editable groups. Reuses
+ * `.grid` / `.item` / `.badge` from the group cards for visual consistency;
+ * only the header row and the inline install form are section-specific.
+ */
+.skills {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--dsw-alias-border-l1);
+}
+
+.skillsHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0 0 8px;
+}
+
+.skillsTools {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.skillsMeta {
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--dsw-alias-markdown-inline-code);
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.skillsForm {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  margin: 0 0 8px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 10px;
+  background: var(--dsw-alias-bg-base);
+}
+
+.skillsTextarea {
+  min-height: 140px;
+  padding: 8px 10px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-base);
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+  font-family: var(--dsw-font-family-mono, ui-monospace, 'Cascadia Mono', Consolas, monospace);
+  font-size: 12px;
+  line-height: 17px;
+  resize: vertical;
+}
+
+.skillsError {
+  margin: 0;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: var(--dsw-alias-state-warn-tertiary);
+  color: var(--dsw-alias-state-warn-label);
+  font-size: 12px;
+  line-height: 17px;
+}
+
+.skillsTabs {
+  display: flex;
+  gap: 6px;
+}
+
+.skillsHelp {
+  margin: 0;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--dsw-alias-label-caption);
+}
+
+.skillsHelp code {
+  padding: 0 3px;
+  border-radius: 3px;
+  background: var(--dsw-alias-markdown-inline-code);
+  font-family: var(--dsw-font-family-mono, ui-monospace, 'Cascadia Mono', Consolas, monospace);
+  font-size: 11px;
+}
+
+.skillsOutput {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-base);
+  max-height: 120px;
+  overflow-y: auto;
+  font-family: var(--dsw-font-family-mono, ui-monospace, 'Cascadia Mono', Consolas, monospace);
+  font-size: 11px;
+  line-height: 16px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--dsw-alias-label-tertiary);
+}

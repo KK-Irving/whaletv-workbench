@@ -14,8 +14,10 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { MouseEvent } from 'react'
 import { Button, Input } from '@deepseek-ai/dsh-client-ui-primitives'
 import clsx from 'clsx'
-import type { WorkbenchPanelProps } from './contract.ts'
-import type { WorkbenchConfig, WorkbenchGroup, WorkbenchItem } from '../shared.ts'
+import type { WorkbenchInjected, WorkbenchPanelProps } from './contract.ts'
+import type {
+  WorkbenchConfig, WorkbenchGroup, WorkbenchItem, WorkbenchSkillList, WorkbenchSkillSummary,
+} from '../shared.ts'
 import { WORKBENCH_ICON } from './icon.ts'
 import css from './WorkbenchPanel.module.css'
 
@@ -218,6 +220,11 @@ export function WorkbenchPanel({
   loadState,
   saveConfig,
   update,
+  loadSkills,
+  installSkill,
+  importSkill,
+  removeSkill,
+  followup,
 }: WorkbenchPanelProps) {
   const open = useStore(s => s.open)
   const search = useStore(s => s.search)
@@ -226,6 +233,8 @@ export function WorkbenchPanel({
   const updating = useStore(s => s.updating)
   const updateLog = useStore(s => s.updateLog)
   const lastResult = useStore(s => s.lastResult)
+  const skills = useStore(s => s.skills)
+  const skillsLoading = useStore(s => s.skillsLoading)
 
   const [editMode, setEditMode] = useState(false)
   const [editing, setEditing] = useState<ItemEditing | null>(null)
@@ -259,6 +268,26 @@ export function WorkbenchPanel({
       actions.setLoadError(error instanceof Error ? error.message : String(error))
     }
   }, [actions, loadState])
+
+  /**
+   * Re-read the skills catalog through the Host's `/skills` route. Errors
+   * live inside the returned WorkbenchSkillList (never thrown), so the
+   * panel decides whether to badge them without a separate try/catch.
+   */
+  const reloadSkills = useCallback(async () => {
+    actions.setSkillsLoading(true)
+    try {
+      const next = await loadSkills()
+      actions.setSkills(next)
+    } catch (error) {
+      actions.setSkills({
+        ok: false, skills: [], complete: false,
+        error: error instanceof Error ? error.message : String(error),
+      })
+    } finally {
+      actions.setSkillsLoading(false)
+    }
+  }, [actions, loadSkills])
 
   const runUpdate = useCallback(async () => {
     clearDismissTimer()
@@ -395,10 +424,14 @@ export function WorkbenchPanel({
     if (await persistConfig(next)) startRenameGroup(group)
   }
 
-  // Load state when the panel opens; Esc and backdrop click close it.
+  // Load state + skills catalog when the panel opens; Esc and backdrop
+  // click close it. Skills refresh in parallel with state — they come from
+  // an independent registry and neither blocks the other's render.
   useEffect(() => {
-    if (open) void reload()
-  }, [open, reload])
+    if (!open) return
+    void reload()
+    void reloadSkills()
+  }, [open, reload, reloadSkills])
   useEffect(() => {
     if (!open) return
     const onKeyDown = (event: KeyboardEvent): void => {
@@ -423,8 +456,38 @@ export function WorkbenchPanel({
     }
   }
   const handleUseSkill = async (prompt: string): Promise<void> => {
-    await handleCopy(prompt)
-    startSession()
+    // followup() is the modern path (agent.followup on the visible session);
+    // it silently no-ops when no sessionId is known and the Host initiator is
+    // absent — in that case fall back to clipboard + new session so the user
+    // still gets the prompt into a chat.
+    const result = await followup(prompt).catch(() => ({ ok: false as const }))
+    if (!result.ok) {
+      await handleCopy(prompt)
+      startSession()
+    }
+  }
+  /**
+   * "Use skill" flow: prime a fresh session with a request to invoke the
+   * named skill. The dsh `skill({name})` tool then loads its body on model
+   * demand — no need to shove the whole markdown into the composer.
+   */
+  const handleSkillUse = async (skillName: string): Promise<void> => {
+    const invocation = `请调用技能：${skillName}`
+    const result = await followup(invocation).catch(() => ({ ok: false as const }))
+    if (!result.ok) {
+      await handleCopy(invocation)
+      startSession()
+    }
+  }
+  /** Uninstall a workbench-managed skill by name; disk + settings registry entry. */
+  const handleSkillRemove = async (skillName: string): Promise<void> => {
+    if (!window.confirm(`删除技能「${skillName}」？（仅移除工作台安装到 $DSH_HOME/skills 的文件）`)) return
+    try {
+      await removeSkill(skillName)
+      await reloadSkills()
+    } catch (error) {
+      actions.setLoadError(error instanceof Error ? error.message : String(error))
+    }
   }
   const onBackdrop = (event: MouseEvent<HTMLDivElement>): void => {
     if (event.target === event.currentTarget) actions.setOpen(false)
@@ -455,7 +518,7 @@ export function WorkbenchPanel({
               {state.git.branch}@{state.git.head}
             </span>
           )}
-          <Button size="sm" onClick={() => { void reload() }} disabled={updating || saving}>刷新</Button>
+          <Button size="sm" onClick={() => { void reload(); void reloadSkills() }} disabled={updating || saving}>刷新</Button>
           <Button size="sm" variant={editMode ? 'primary' : 'outline'} onClick={toggleEditMode} disabled={updating || saving}>
             {editMode ? '完成' : '编辑'}
           </Button>
@@ -566,6 +629,16 @@ export function WorkbenchPanel({
               <Button size="sm" variant="outline" onClick={() => { void addGroup() }} disabled={saving}>+ 新建分组</Button>
             </div>
           )}
+          <SkillsSection
+            skills={skills}
+            skillsLoading={skillsLoading}
+            query={query}
+            installSkill={installSkill}
+            importSkill={importSkill}
+            onUse={(name) => { void handleSkillUse(name) }}
+            onRemove={(name) => { void handleSkillRemove(name) }}
+            onReload={() => { void reloadSkills() }}
+          />
         </div>
 
         {(lastResult !== null || updateLog !== '') && (
@@ -579,5 +652,300 @@ export function WorkbenchPanel({
         )}
       </section>
     </div>
+  )
+}
+
+/** Two mutually-exclusive skill install modes offered in the form. */
+type SkillFormMode = 'inline' | 'git'
+
+/** Inline-write install draft (name + description + Markdown body). */
+interface SkillInlineDraft {
+  name: string
+  description: string
+  content: string
+}
+
+/** Git-import draft (URL + optional ref + optional sub-path + target name). */
+interface SkillGitDraft {
+  url: string
+  ref: string
+  subPath: string
+  name: string
+}
+
+function emptyInlineDraft(): SkillInlineDraft {
+  return { name: '', description: '', content: '' }
+}
+function emptyGitDraft(): SkillGitDraft {
+  return { url: '', ref: '', subPath: '', name: '' }
+}
+
+/**
+ * Compose a SKILL.md body from the inline form: YAML frontmatter carrying
+ * `name` + `description` (the two keys the dsh-skill-filesystem provider
+ * reads) followed by the user's markdown body. Description is written on
+ * one line and escaped minimally so the frontmatter parser accepts it.
+ */
+function composeInlineSkill(draft: SkillInlineDraft): string {
+  const escapedDesc = draft.description.replace(/"/g, '\\"')
+  const front = [
+    '---',
+    `name: ${draft.name}`,
+    `description: "${escapedDesc}"`,
+    '---',
+    '',
+  ].join('\n')
+  return front + draft.content
+}
+
+/**
+ * Guess a kebab-case target name from a git URL + sub-path when the user
+ * hasn't picked one yet: prefer the sub-path leaf, fall back to the repo
+ * name (strip `.git` and any URL fragment).
+ */
+function suggestGitName(url: string, subPath: string): string {
+  const leaf = subPath.split('/').filter(s => s !== '' && s !== '.').pop()
+  if (leaf !== undefined && leaf !== '') {
+    return leaf.replace(/\.md$/i, '').toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '')
+  }
+  const trimmed = url.replace(/\.git$/i, '').replace(/[?#].*$/, '')
+  const tail = trimmed.split(/[/:]/).filter(s => s !== '').pop() ?? ''
+  return tail.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '')
+}
+
+/**
+ * "工作台技能" section: rendered below the user-editable groups. Reads live
+ * from ctx.skills via the Host `/skills` route, and lets the user install
+ * new skill markdown files two ways:
+ *
+ *   - Inline: type a Markdown body; the Host wraps it in a YAML frontmatter
+ *     carrying name + description and writes to $DSH_HOME/skills/<name>/.
+ *   - Git import: clone a repo (shallow, http/https/ssh only) and copy the
+ *     skill body at <subPath> into $DSH_HOME/skills/<name>/. Both bundle
+ *     form (SKILL.md + assets) and flat form (a single *.md file) are
+ *     accepted.
+ *
+ * Removal is only offered for skills the workbench itself owns (Host reports
+ * `removable: true`), so project-scoped and bundled skills stay read-only.
+ */
+function SkillsSection(props: {
+  skills: WorkbenchSkillList | null
+  skillsLoading: boolean
+  /** Panel search draft — reused to filter skill names/descriptions inline. */
+  query: string
+  installSkill: WorkbenchInjected['installSkill']
+  importSkill: WorkbenchInjected['importSkill']
+  onUse: (name: string) => void
+  onRemove: (name: string) => void
+  onReload: () => void
+}) {
+  const { skills, skillsLoading, query, installSkill, importSkill, onUse, onRemove, onReload } = props
+  const [showForm, setShowForm] = useState(false)
+  const [mode, setMode] = useState<SkillFormMode>('inline')
+  const [inlineDraft, setInlineDraft] = useState<SkillInlineDraft>(emptyInlineDraft)
+  const [gitDraft, setGitDraft] = useState<SkillGitDraft>(emptyGitDraft)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [output, setOutput] = useState<string | null>(null)
+
+  const filtered = (skills?.skills ?? []).filter(s =>
+    query === ''
+    || s.name.toLowerCase().includes(query)
+    || s.description.toLowerCase().includes(query))
+
+  const submitInline = async (): Promise<void> => {
+    const name = inlineDraft.name.trim()
+    const content = inlineDraft.content.trim()
+    if (name === '') { setError('技能名称不能为空'); return }
+    if (content === '') { setError('技能正文不能为空'); return }
+    setBusy(true)
+    setError(null)
+    setOutput(null)
+    try {
+      await installSkill({ name, content: composeInlineSkill(inlineDraft) })
+      setInlineDraft(emptyInlineDraft())
+      setShowForm(false)
+      onReload()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const submitGit = async (): Promise<void> => {
+    const url = gitDraft.url.trim()
+    if (url === '') { setError('Git 仓库地址不能为空'); return }
+    const name = gitDraft.name.trim() !== '' ? gitDraft.name.trim() : suggestGitName(url, gitDraft.subPath)
+    if (name === '') { setError('目标名称不能为空（无法从 URL 与子路径推断）'); return }
+    setBusy(true)
+    setError(null)
+    setOutput(null)
+    try {
+      const result = await importSkill({
+        url,
+        name,
+        ...(gitDraft.subPath.trim() !== '' ? { subPath: gitDraft.subPath.trim() } : {}),
+        ...(gitDraft.ref.trim() !== '' ? { ref: gitDraft.ref.trim() } : {}),
+      })
+      if (result.output !== undefined && result.output !== '') setOutput(result.output)
+      setGitDraft(emptyGitDraft())
+      setShowForm(false)
+      onReload()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <section className={css.skills} aria-label="工作台技能">
+      <div className={css.skillsHead}>
+        <h2 className={css.groupTitle}>工作台技能</h2>
+        <span className={css.skillsTools}>
+          {skillsLoading && <span className={css.skillsMeta}>加载中…</span>}
+          {skills?.complete === false && !skillsLoading && (
+            <span className={css.skillsMeta} title="部分技能提供者未完成发现">部分</span>
+          )}
+          <Button
+            size="sm"
+            variant={showForm ? 'primary' : 'outline'}
+            onClick={() => { setShowForm(v => !v); setError(null); setOutput(null) }}
+            disabled={busy}
+          >
+            {showForm ? '取消' : '+ 新建技能'}
+          </Button>
+        </span>
+      </div>
+
+      {showForm && (
+        <div className={css.skillsForm}>
+          <div className={css.skillsTabs} role="tablist">
+            <Button
+              size="sm"
+              variant={mode === 'inline' ? 'primary' : 'outline'}
+              onClick={() => { setMode('inline'); setError(null); setOutput(null) }}
+              disabled={busy}
+              role="tab"
+              aria-selected={mode === 'inline'}
+            >
+              手写正文
+            </Button>
+            <Button
+              size="sm"
+              variant={mode === 'git' ? 'primary' : 'outline'}
+              onClick={() => { setMode('git'); setError(null); setOutput(null) }}
+              disabled={busy}
+              role="tab"
+              aria-selected={mode === 'git'}
+            >
+              从 Git 仓库导入
+            </Button>
+          </div>
+
+          {mode === 'inline' && (
+            <>
+              <Input
+                placeholder="kebab-case 名称（如 whaletv-build-mp）"
+                value={inlineDraft.name}
+                onChange={event => { setInlineDraft(d => ({ ...d, name: event.target.value })) }}
+              />
+              <Input
+                placeholder="一行描述（模型看得到的路由提示）"
+                value={inlineDraft.description}
+                onChange={event => { setInlineDraft(d => ({ ...d, description: event.target.value })) }}
+              />
+              <textarea
+                className={css.skillsTextarea}
+                placeholder={'技能正文（Markdown）\n\n可以粘贴现有 SKILL.md 的正文；工作台会自动加上 name + description 的 YAML frontmatter。'}
+                value={inlineDraft.content}
+                onChange={event => { setInlineDraft(d => ({ ...d, content: event.target.value })) }}
+                rows={10}
+              />
+            </>
+          )}
+
+          {mode === 'git' && (
+            <>
+              <Input
+                placeholder="Git 仓库地址（如 https://github.com/user/skills.git 或 git@github.com:user/skills.git）"
+                value={gitDraft.url}
+                onChange={event => { setGitDraft(d => ({ ...d, url: event.target.value })) }}
+              />
+              <div className={css.formRow}>
+                <Input
+                  placeholder="分支 / tag / 提交 SHA（可选，默认默认分支）"
+                  value={gitDraft.ref}
+                  onChange={event => { setGitDraft(d => ({ ...d, ref: event.target.value })) }}
+                />
+                <Input
+                  placeholder="仓库内子路径（可选，如 commit-message 或 skills/foo.md）"
+                  value={gitDraft.subPath}
+                  onChange={event => { setGitDraft(d => ({ ...d, subPath: event.target.value })) }}
+                />
+              </div>
+              <Input
+                placeholder={`目标名称（可选，留空自动推断为「${suggestGitName(gitDraft.url, gitDraft.subPath) || 'skill-name'}」）`}
+                value={gitDraft.name}
+                onChange={event => { setGitDraft(d => ({ ...d, name: event.target.value })) }}
+              />
+              <p className={css.skillsHelp}>
+                支持两种形态：<code>&lt;subPath&gt;/SKILL.md</code>（bundle，会连同 assets 一起复制）或
+                <code>&lt;subPath&gt;.md</code>（flat，单文件）。仅接受 http(s) / ssh 协议。
+              </p>
+            </>
+          )}
+
+          {error !== null && <p className={css.skillsError} role="alert">{error}</p>}
+          {output !== null && output !== '' && (
+            <pre className={css.skillsOutput}>{output}</pre>
+          )}
+          <div className={css.formActions}>
+            <Button
+              size="sm"
+              variant="primary"
+              onClick={() => { void (mode === 'inline' ? submitInline() : submitGit()) }}
+              disabled={busy}
+            >
+              {busy ? (mode === 'git' ? '克隆中…' : '安装中…') : (mode === 'git' ? '克隆并安装' : '安装到 $DSH_HOME/skills')}
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {skills?.ok === false && skills.error !== undefined && (
+        <p className={css.skillsError} role="alert">技能列表读取失败：{skills.error}</p>
+      )}
+
+      {skills?.ok === true && filtered.length === 0 && !skillsLoading && (
+        <p className={css.hint}>
+          {query === '' ? '当前没有可用的技能。点击「+ 新建技能」写入一份，或从 Git 仓库导入。' : '没有匹配的技能。'}
+        </p>
+      )}
+
+      <div className={css.grid}>
+        {filtered.map((skill: WorkbenchSkillSummary) => (
+          <div key={`${skill.provider}:${skill.name}`} className={css.item}>
+            <div className={css.itemHead}>
+              <span className={css.itemTitle}>{skill.name}</span>
+              <span className={css.badge} title={`来源：${skill.source}｜提供者：${skill.provider}`}>{skill.source}</span>
+            </div>
+            <p className={css.itemDesc}>{skill.description}</p>
+            {skill.whenToUse !== undefined && skill.whenToUse !== '' && (
+              <p className={css.itemDesc}><em>用途：</em>{skill.whenToUse}</p>
+            )}
+            <div className={css.itemActions}>
+              <Button size="sm" variant="outline" onClick={() => { onUse(skill.name) }}>使用</Button>
+              {skill.removable && (
+                <Button size="sm" variant="outline" className={css.danger} onClick={() => { onRemove(skill.name) }}>
+                  删除
+                </Button>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
   )
 }
