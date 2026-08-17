@@ -26,14 +26,32 @@ export type { WorkbenchItem, WorkbenchGroup, WorkbenchConfig, WorkbenchState, Wo
 /** Required services: slot declarations plus the Host openPath action. */
 export const inject = ['slots', 'workspaces']
 
-/** Raise a Host route's JSON payload; non-ok results throw their error text. */
+/**
+ * Raise a Host route's JSON payload; non-ok results throw their error text.
+ * Tolerant of non-JSON bodies so a stale Host (route not yet loaded, e.g.
+ * before a dsh web restart) surfaces as an actionable message instead of a
+ * cryptic JSON parse error.
+ */
 async function fetchJson<T extends { ok: boolean; error?: string }>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, init)
-  const body = await response.json() as T
-  if (!response.ok || body.ok !== true) {
-    throw new Error(body.error ?? `HTTP ${response.status}`)
+  const text = await response.text()
+  let body: unknown = null
+  if (text !== '') {
+    try { body = JSON.parse(text) } catch { body = null }
   }
-  return body
+  if (response.ok && body !== null && typeof body === 'object' && (body as { ok?: unknown }).ok === true) {
+    return body as T
+  }
+  if (body !== null && typeof body === 'object' && typeof (body as { error?: unknown }).error === 'string') {
+    throw new Error((body as { error: string }).error)
+  }
+  if (text === '') {
+    throw new Error(`服务端返回空响应（HTTP ${response.status}）。工作台的服务端接口可能尚未加载：请重启 dsh web 后重试。`)
+  }
+  if (text.trimStart().startsWith('<!doctype') || text.trimStart().startsWith('<html')) {
+    throw new Error(`接口 ${url} 未在服务端注册（HTTP ${response.status} 返回了页面）。请重启 dsh web 后重试。`)
+  }
+  throw new Error(`HTTP ${response.status}`)
 }
 
 /**
