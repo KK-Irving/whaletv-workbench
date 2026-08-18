@@ -152,6 +152,7 @@
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
   gap: 8px;
+  align-items: start;
 }
 
 .item {
@@ -162,6 +163,8 @@
   border: 1px solid var(--dsw-alias-border-l1);
   border-radius: 12px;
   background: var(--dsw-alias-bg-base);
+  height: 120px;
+  overflow: hidden;
 }
 
 .item:hover {
@@ -173,12 +176,17 @@
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  min-width: 0;
 }
 
 .itemTitle {
   font-size: 14px;
   line-height: 20px;
   color: var(--dsw-alias-label-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
 }
 
 .badge {
@@ -207,6 +215,12 @@
   gap: 6px;
   flex-wrap: wrap;
   margin-top: auto;
+}
+
+.itemEditing {
+  height: auto;
+  max-height: none;
+  overflow: visible;
 }
 
 .form {

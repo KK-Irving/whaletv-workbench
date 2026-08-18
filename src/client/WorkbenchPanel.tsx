@@ -172,7 +172,7 @@ function ItemCard(props: {
   )
   if (editing) {
     return (
-      <div className={css.item}>
+      <div className={clsx(css.item, css.itemEditing)}>
         {head}
         <ItemForm draft={draft} saving={saving} onChange={onDraftChange} onSave={onSaveDraft} onCancel={onCancelDraft} />
       </div>
@@ -366,10 +366,10 @@ export function WorkbenchPanel({
 
   const submitDraft = async (): Promise<void> => {
     if (state === null || editing === null) return
-    const { groupId, itemId, draft } = editing
+    const { groupId, itemId } = editing
+    let draft = editing.draft
     if (draft.title.trim() === '') {
-      setSaveError('条目名称不能为空')
-      return
+      draft = { ...draft, title: '新条目' }
     }
     const next: WorkbenchConfig = {
       groups: state.config.groups.map(group => {
@@ -511,7 +511,7 @@ export function WorkbenchPanel({
       : group.items.filter(item =>
         item.title.toLowerCase().includes(query)
         || (item.description ?? '').toLowerCase().includes(query)),
-  })).filter(group => group.items.length > 0)
+  })).filter(group => editMode || group.items.length > 0)
 
   return (
     <div className={css.backdrop} onClick={onBackdrop} data-whaletv-workbench>
@@ -614,10 +614,7 @@ export function WorkbenchPanel({
                   />
                 ))}
                 {editMode && editing !== null && editing.groupId === group.id && editing.itemId === null && (
-                  <div className={css.item}>
-                    <div className={css.itemHead}>
-                      <span className={css.itemTitle}>新条目</span>
-                    </div>
+                  <div className={clsx(css.item, css.itemEditing)}>
                     <ItemForm
                       draft={editing.draft}
                       saving={saving}
