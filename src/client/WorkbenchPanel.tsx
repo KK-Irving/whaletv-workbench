@@ -1055,11 +1055,7 @@ function SkillsSection(props: {
             )}
             <div className={css.itemActions}>
               <Button size="sm" variant="outline" onClick={() => { onUse(skill.name) }}>使用</Button>
-              {skill.removable && (
-                <Button size="sm" variant="outline" className={css.danger} onClick={() => { onRemove(skill.name) }}>
-                  删除
-                </Button>
-              )}
+
             </div>
           </div>
         ))}
