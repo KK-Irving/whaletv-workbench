@@ -30,6 +30,17 @@ let handler
 try {
   const mod = await import(pathToFileURL(join(ROOT, 'lib', 'index.js')).href)
 
+  // The inject list is a runtime contract Cordis validates lazily: any
+  // property access on `ctx` that isn't declared here throws
+  // "cannot get property X without inject" at the first read from a route
+  // handler. Every service the routes touch — including `settings` for the
+  // installedSkills registry updates — must be in this list.
+  const expectedInject = ['webServer', 'clientModules', 'skills', 'agents', 'settings'].sort()
+  const actualInject = [...(mod.inject ?? [])].sort()
+  if (actualInject.join(',') !== expectedInject.join(',')) {
+    throw new Error(`inject drift: got [${actualInject.join(', ')}], want [${expectedInject.join(', ')}]`)
+  }
+
   // Mock the subset of Context the Host half touches during apply()
   // and route handling. `inject(services, cb)` is a cordis primitive
   // installSettingsSection uses; noop it — the settings namespace has no
@@ -44,6 +55,15 @@ try {
     clientModules: { rebuilt: () => {} },
     skills: {
       snapshot: async () => ({ skills: [], complete: true }),
+      // The workbench registers its own SkillProvider so panel visibility
+      // doesn't depend on whether dsh-skill-filesystem is happy. The smoke
+      // mock only needs to record that registration happened; the factory
+      // is invoked with a stub control so it can capture `invalidate()`.
+      registerProvider: (factory) => {
+        const control = { signal: new AbortController().signal, invalidate: () => {} }
+        factory(control)
+        return () => {}
+      },
     },
     agents: {
       get: () => undefined,

@@ -134,7 +134,22 @@ export interface WorkbenchSkillImportRequest {
 /** POST /whaletv/workbench/skills/import response. */
 export interface WorkbenchSkillImportResult {
   ok: boolean
-  /** Filesystem path of the installed SKILL.md; useful for troubleshooting. */
+  /**
+   * Names of the skills the Host wrote to `$DSH_HOME/skills/`. Single-skill
+   * imports return one entry; batch mode (a repo with multiple
+   * `<child>/SKILL.md` bundles) returns each installed child.
+   */
+  installed?: string[]
+  /**
+   * Batch-mode candidates that were skipped, each with the reason (bad
+   * kebab-case name, name collision with a reserved bundle filename, etc.).
+   */
+  skipped?: Array<{ name: string; reason: string }>
+  /**
+   * For single-skill imports, the path of the installed SKILL.md or *.md.
+   * For batch imports, the parent directory (`$DSH_HOME/skills`) so the
+   * user can jump there in a file manager.
+   */
   writtenTo?: string
   /** Captured `git clone` output when it succeeded, or the failure text. */
   output?: string

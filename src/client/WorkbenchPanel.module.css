@@ -422,3 +422,46 @@
   word-break: break-all;
   color: var(--dsw-alias-label-tertiary);
 }
+
+.skillsSuccess {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  margin: 0 0 8px;
+  border: 1px solid var(--dsw-alias-state-success-border, var(--dsw-alias-border-l3));
+  border-left-width: 3px;
+  border-radius: 8px;
+  background: var(--dsw-alias-state-success-tertiary, var(--dsw-alias-bg-layer-2));
+}
+
+.skillsSuccessHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.skillsSuccessTitle {
+  flex: 1;
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 18px;
+  color: var(--dsw-alias-label-primary);
+}
+
+.skillsSuccessDetail {
+  margin: 0;
+  font-size: 12px;
+  line-height: 17px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.skillsSuccessDetail code {
+  padding: 0 3px;
+  border-radius: 3px;
+  background: var(--dsw-alias-markdown-inline-code);
+  font-family: var(--dsw-font-family-mono, ui-monospace, 'Cascadia Mono', Consolas, monospace);
+  font-size: 11px;
+  word-break: break-all;
+}

@@ -31,6 +31,7 @@ import {
   cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync,
   statSync, writeFileSync,
 } from 'node:fs'
+import type { Stats } from 'node:fs'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import os from 'node:os'
 import { basename, dirname, join } from 'node:path'
@@ -41,9 +42,13 @@ import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-client-modules'
 // Type-only: ctx.webServer (named HTTP route registry) context merge.
 import type {} from '@deepseek-ai/dsh-host-webserver'
-// Type-only: ctx.skills and ctx.agents context merges.
-import type {} from '@deepseek-ai/dsh-skill'
+// Type-only: ctx.agents context merge.
 import type {} from '@deepseek-ai/dsh-agent'
+// ctx.skills context merge + value imports for the workbench-owned provider.
+import type {
+  SkillCandidate, SkillDefinition, SkillLookupOptions, SkillProviderControl,
+} from '@deepseek-ai/dsh-skill'
+import { parse as parseYaml } from 'yaml'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { installSettingsSection, settingsNamespace } from '@deepseek-ai/dsh-settings'
@@ -82,7 +87,17 @@ export const Config: z<Config> = z.object({
 /** Settings namespace: the join key between the Host register and the browser card. */
 const WORKBENCH_NAMESPACE = settingsNamespace('whaletv-workbench')
 
-/** Host services this plugin uses through ctx. */
+/**
+ * Host services this plugin uses through ctx.
+ *
+ * `settings` is declared here even though `installSettingsSection` internally
+ * does its own `ctx.inject(["settings"], ...)` — that scoped inject only makes
+ * `settings` visible inside the callback, not on the outer ctx the route
+ * handlers close over. The install/import/remove skill routes reach into
+ * `ctx.settings.update(...)` to keep the `installedSkills` registry in sync,
+ * and without this declaration Cordis rejects the read with "cannot get
+ * property settings without inject".
+ */
 export const inject = ['webServer', 'clientModules', 'skills', 'agents', 'settings']
 
 /** Plugin id — matches the package name and the client bundle graph row. */
@@ -129,6 +144,12 @@ const execFileAsync = promisify(execFile)
  * output. Only pnpm's own subprocesses need this var; dropping it at the
  * boundary does not disable the pnpm feature — pnpm still honors its
  * pnpm-workspace.yaml / .npmrc config sources inside the child.
+ *
+ * Also force git into non-interactive mode: our plugin subprocess has no
+ * tty, so any credential prompt (git-credential-manager, ask-pass) hangs or
+ * crashes. Setting `GIT_TERMINAL_PROMPT=0` + `GCM_INTERACTIVE=Never` makes
+ * git fail fast with a readable "could not read Username" message when a
+ * private repo needs auth that isn't already cached.
  */
 const NOISY_NPM_ENV_VARS: readonly string[] = [
   'NPM_CONFIG_MANAGE_PACKAGE_MANAGER_VERSIONS',
@@ -137,7 +158,37 @@ const NOISY_NPM_ENV_VARS: readonly string[] = [
 function sanitizedEnv(): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env }
   for (const key of NOISY_NPM_ENV_VARS) delete env[key]
+  env.GIT_TERMINAL_PROMPT = '0'
+  env.GCM_INTERACTIVE = 'Never'
   return env
+}
+
+/**
+ * Recognize git errors that come from "no cached credentials for a private
+ * repo" and the OAuth 2.0 `invalid_client` family enterprise GitHub returns
+ * when SSO / OIDC rejects the HTTP Basic auth git tried. These are the
+ * exact strings git / GCM / the OAuth server emit. When one hits we
+ * replace the raw output with an actionable message pointing at the two
+ * viable workarounds (SSH with configured keys, or an SSO-authorized PAT).
+ */
+const GIT_AUTH_ERROR_PATTERN =
+  /could not read Username|Authentication failed|Interactive logon|Invalid username or password|fatal: unable to access|Permission denied \(publickey\)|Client authentication failed|unsupported authentication method|unknown client|invalid_client/i
+
+function translateGitError(url: string, message: string): string {
+  if (!GIT_AUTH_ERROR_PATTERN.test(message)) return message
+  const isOAuth = /Client authentication failed|unsupported authentication method|unknown client|invalid_client/i.test(message)
+  const header = isOAuth
+    ? `仓库 ${url} 拒绝了 HTTP 基本认证 —— 这个 host 用了 OAuth/SSO 保护（企业版 GitHub / GitLab 常见）。`
+    : `无法访问仓库（认证失败）：${url}`
+  return [
+    header,
+    '',
+    'git 命令行认证走不通 OAuth 流程；工作台子进程也没有交互终端。只有下面两条能跑通：',
+    ' 1. 改用 SSH 地址（git@host:owner/repo.git）+ 事先配好的 SSH key —— 完全绕开 HTTPS/OAuth。',
+    ' 2. 生成 Personal Access Token 并在企业 GHE 后台点「Enable SSO」授权该 token 通过 SSO；然后用 https://<user>:<token>@host/... 格式填进 URL 框。',
+    '',
+    `原始错误：${message.split('\n').slice(0, 6).join(' ｜ ')}`,
+  ].join('\n')
 }
 
 /** $DSH_HOME resolution, matching what the launcher and other bundles use. */
@@ -459,6 +510,54 @@ function findManagedSkillPath(name: string): string | undefined {
 }
 
 /**
+ * Diagnostic payload for the "file on disk but not visible" case. Surfaces
+ * both what our Host thinks is the user-dsh root and what dsh's own skill
+ * registry returns from a live `snapshot()`, alongside relevant env vars.
+ * When they diverge, the mismatch shape (path differs, catalog empty, or
+ * both) tells us which layer to fix.
+ */
+async function buildSkillDebug(ctx: Context): Promise<Record<string, unknown>> {
+  let userDshSkillsContents: string[] = []
+  let readError: string | undefined
+  try {
+    if (existsSync(USER_DSH_SKILLS_DIR)) {
+      userDshSkillsContents = readdirSync(USER_DSH_SKILLS_DIR)
+    }
+  } catch (error) {
+    readError = error instanceof Error ? error.message : String(error)
+  }
+  let snapshot: unknown
+  let snapshotError: string | undefined
+  try {
+    snapshot = await ctx.skills.snapshot({})
+  } catch (error) {
+    snapshotError = error instanceof Error ? error.message : String(error)
+  }
+  return {
+    ok: true,
+    workbenchView: {
+      dshHome: DSH_HOME,
+      userDshSkillsDir: USER_DSH_SKILLS_DIR,
+      userDshSkillsExists: existsSync(USER_DSH_SKILLS_DIR),
+      userDshSkillsContents,
+      ...(readError !== undefined ? { readError } : {}),
+    },
+    env: {
+      DSH_HOME: process.env.DSH_HOME ?? null,
+      DSH_AGENTS_HOME: process.env.DSH_AGENTS_HOME ?? null,
+      DSH_BUNDLED_SKILL_DIR: process.env.DSH_BUNDLED_SKILL_DIR ?? null,
+      USERPROFILE: process.env.USERPROFILE ?? null,
+      HOME: process.env.HOME ?? null,
+      cwd: process.cwd(),
+    },
+    dshRegistry: {
+      snapshot,
+      ...(snapshotError !== undefined ? { snapshotError } : {}),
+    },
+  }
+}
+
+/**
  * Assemble the GET /whaletv/workbench/skills payload from ctx.skills'
  * catalog. `removable` is true only for skills whose files live inside
  * $DSH_HOME/skills — those the install route wrote or the user placed by
@@ -524,7 +623,12 @@ function installSkillOnDisk(name: string, content: string): string {
  */
 async function importSkillFromGit(
   request: WorkbenchSkillImportRequest,
-): Promise<{ writtenTo: string; output: string }> {
+): Promise<{
+  installed: string[]
+  skipped?: Array<{ name: string; reason: string }>
+  writtenTo?: string
+  output: string
+}> {
   const targetName = request.name?.trim() ?? ''
   const url = request.url?.trim() ?? ''
   const subPath = request.subPath?.trim() ?? ''
@@ -532,6 +636,13 @@ async function importSkillFromGit(
 
   if (!SKILL_NAME_PATTERN.test(targetName)) {
     throw new Error(`目标名称必须为 kebab-case（^[a-z0-9]+(?:-[a-z0-9]+)*$），收到：${targetName || '<空>'}`)
+  }
+  // Reject names that clearly came from `SKILL.md` collapsing to `skill` —
+  // that's the bundle filename convention, not a plausible skill identity.
+  // The client's `suggestGitName` already handles this, but the Host stays
+  // defensive so a hand-typed `skill` doesn't silently produce `skill.md`.
+  if (/^skill(?:\.md)?$/i.test(targetName)) {
+    throw new Error('名称 "skill" 冲突（SKILL.md 是 dsh 的 bundle 保留文件名）；请显式指定一个具体名称，例如 "whaletv-dev-power" / "agent-engineering-framework"。')
   }
   if (!GIT_URL_PATTERN.test(url)) {
     throw new Error(`仅支持 http/https/ssh 协议的 git 仓库地址；收到：${url || '<空>'}`)
@@ -551,7 +662,18 @@ async function importSkillFromGit(
     const args = ['clone', '--depth', '1', '--no-tags', '--single-branch']
     if (ref !== '') args.push('--branch', ref)
     args.push('--', url, staging)
-    const gitOutput = await run('git', args, IMPORT_STAGING_DIR)
+    let gitOutput: string
+    try {
+      gitOutput = await run('git', args, IMPORT_STAGING_DIR)
+    } catch (error) {
+      const raw = error instanceof Error ? error.message : String(error)
+      // Nuke the failed clone before rethrowing — if we defer to the outer
+      // finally on Windows, git.exe still holds handles on `.git/pack/*`
+      // and rmSync silently leaves the half-clone behind. Ignore any
+      // cleanup failure here so the translated error propagates cleanly.
+      try { removeStagingSafely(staging) } catch { /* best-effort */ }
+      throw new Error(translateGitError(url, raw))
+    }
 
     // Resolve where the SKILL lives inside the freshly cloned tree.
     const rawSource = subPath === '' ? staging : join(staging, subPath)
@@ -565,34 +687,309 @@ async function importSkillFromGit(
       throw new Error(`仓库里未找到子路径：${subPath === '' ? '<repo 根目录>' : subPath}`)
     }
 
-    const stat = statSync(source)
     mkdirSync(USER_DSH_SKILLS_DIR, { recursive: true })
+    const stat = statSync(source)
 
-    let writtenTo: string
-    if (stat.isDirectory() && existsSync(join(source, 'SKILL.md'))) {
-      // Bundle form — copy whole directory (SKILL.md + assets/scripts/refs).
+    const resolved = resolveSkillSource(source, stat)
+    if (resolved.kind === 'bundle') {
+      // Bundle form — one skill. `source` may have been walked one level up
+      // when the user pointed subPath at a `SKILL.md` file directly.
       const dest = join(USER_DSH_SKILLS_DIR, targetName)
-      if (existsSync(dest)) rmSync(dest, { recursive: true, force: true })
-      cpSync(source, dest, { recursive: true, filter: (src) => !src.includes(`${staging}/.git`) })
-      // Belt-and-suspenders: if cpSync's filter didn't catch .git (Windows
-      // vs POSIX slash), remove it after the fact.
-      const gitDir = join(dest, '.git')
-      if (existsSync(gitDir)) rmSync(gitDir, { recursive: true, force: true })
-      writtenTo = join(dest, 'SKILL.md')
-    } else if (stat.isFile() && source.toLowerCase().endsWith('.md')) {
+      installBundleDir(resolved.dir, dest, staging)
+      return { installed: [targetName], writtenTo: join(dest, 'SKILL.md'), output: gitOutput }
+    }
+    if (resolved.kind === 'flat') {
       // Flat form — one Markdown file becomes `<name>.md` under the root.
       const dest = join(USER_DSH_SKILLS_DIR, `${targetName}.md`)
       if (existsSync(dest)) rmSync(dest, { force: true })
-      cpSync(source, dest)
-      writtenTo = dest
-    } else {
-      throw new Error(`在 ${subPath === '' ? '<repo 根目录>' : subPath} 未找到 SKILL.md 或 <name>.md`)
+      cpSync(resolved.file, dest)
+      return { installed: [targetName], writtenTo: dest, output: gitOutput }
     }
-    return { writtenTo, output: gitOutput }
+    if (resolved.kind === 'batch') {
+      // Batch — one repo containing multiple `<child>/SKILL.md` bundles;
+      // each child directory becomes its own skill under its own name.
+      // The user-supplied `targetName` is ignored: batch identity is the
+      // child dir name (validated kebab-case, skipped otherwise).
+      const installed: string[] = []
+      const skipped: Array<{ name: string; reason: string }> = []
+      for (const child of resolved.children) {
+        if (!SKILL_NAME_PATTERN.test(child)) {
+          skipped.push({ name: child, reason: '目录名不是 kebab-case（^[a-z0-9]+(?:-[a-z0-9]+)*$）' })
+          continue
+        }
+        if (/^skill(?:\.md)?$/i.test(child)) {
+          skipped.push({ name: child, reason: '目录名与保留字冲突（SKILL.md 的 bundle 保留字）' })
+          continue
+        }
+        const srcDir = join(resolved.root, child)
+        const dest = join(USER_DSH_SKILLS_DIR, child)
+        try {
+          installBundleDir(srcDir, dest, staging)
+          installed.push(child)
+        } catch (error) {
+          skipped.push({ name: child, reason: error instanceof Error ? error.message : String(error) })
+        }
+      }
+      if (installed.length === 0) {
+        throw new Error(
+          `在 ${subPath === '' ? '<repo 根目录>' : subPath} 找到 ${resolved.children.length} 个候选，但没有一个可以安装：\n`
+          + skipped.map(s => ` - ${s.name}：${s.reason}`).join('\n'),
+        )
+      }
+      return {
+        installed,
+        skipped: skipped.length > 0 ? skipped : undefined,
+        // For single-batch-result the writtenTo shows the parent dir; the
+        // frontend uses `installed` primarily for display.
+        writtenTo: USER_DSH_SKILLS_DIR,
+        output: gitOutput,
+      }
+    }
+    throw new Error(`在 ${subPath === '' ? '<repo 根目录>' : subPath} 未找到 SKILL.md 或 <name>.md，也没有子目录级别的 skill bundle`)
   } finally {
-    // Clean up the staging clone on both success and failure.
-    rmSync(staging, { recursive: true, force: true })
+    // Clean up the staging clone on both success and failure. Errors here
+    // are swallowed (best-effort) so they never mask a real earlier throw
+    // that the caller cares about — the startup sweep will pick up any
+    // orphan on the next plugin mount.
+    try { removeStagingSafely(staging) } catch { /* best-effort */ }
   }
+}
+
+/**
+ * Windows-friendly recursive delete: retry with a short delay so Node's
+ * fs.rmSync can win the race against git.exe / antivirus still holding
+ * handles on freshly-written `.git/pack/*` files right after clone.
+ *
+ * `maxRetries` + `retryDelay` are documented options on Node ≥ 14.14 and
+ * are exactly designed for this scenario. `force: true` also overrides
+ * the read-only bit git sets on pack files.
+ */
+function removeStagingSafely(path: string): void {
+  rmSync(path, { recursive: true, force: true, maxRetries: 8, retryDelay: 250 })
+}
+
+/**
+ * Sweep any stale `skill-*` directories left behind by past failed clones
+ * (Windows file-lock timing, dsh crashed mid-import, etc.). Runs once on
+ * plugin mount as a best-effort — a single retry cycle here is enough
+ * because whatever process was holding handles is long gone by now.
+ */
+function sweepStagingDir(): void {
+  if (!existsSync(IMPORT_STAGING_DIR)) return
+  try {
+    for (const entry of readdirSync(IMPORT_STAGING_DIR)) {
+      if (!entry.startsWith('skill-')) continue
+      try { removeStagingSafely(join(IMPORT_STAGING_DIR, entry)) } catch { /* ignore */ }
+    }
+  } catch { /* ignore — sweep is best-effort */ }
+}
+
+/**
+ * Copy one bundle directory into $DSH_HOME/skills/<name>/, dropping any
+ * `.git` remains from the shallow clone. `staging` is only used to help
+ * the filter recognize the git dir path prefix — everything is otherwise
+ * relative to `srcDir`.
+ */
+function installBundleDir(srcDir: string, dest: string, staging: string): void {
+  if (existsSync(dest)) rmSync(dest, { recursive: true, force: true, maxRetries: 8, retryDelay: 250 })
+  cpSync(srcDir, dest, {
+    recursive: true,
+    // POSIX-and-Windows-safe .git detection: check the trailing segment.
+    filter: (src) => !src.startsWith(join(staging, '.git')) && basename(src) !== '.git',
+  })
+  const gitDir = join(dest, '.git')
+  if (existsSync(gitDir)) rmSync(gitDir, { recursive: true, force: true, maxRetries: 8, retryDelay: 250 })
+}
+
+/**
+ * Skill-source shape after resolving what the user's URL+sub-path pointed at.
+ * `bundle` = one SKILL.md-anchored directory to copy wholesale.
+ * `flat`   = a single `.md` file to copy as `<name>.md`.
+ * `batch`  = a parent directory whose immediate children are each a bundle.
+ * `none`   = no valid target — the caller throws.
+ */
+type SkillSource =
+  | { kind: 'bundle'; dir: string }
+  | { kind: 'flat'; file: string }
+  | { kind: 'batch'; root: string; children: readonly string[] }
+  | { kind: 'none' }
+
+/**
+ * Classify the cloned tree at `source` (may be a file or a directory).
+ *
+ * When source is a file:
+ *   - `.../SKILL.md` → bundle (walk up one level to the enclosing dir)
+ *   - `.../*.md` (any other markdown) → flat
+ *   - otherwise → none
+ *
+ * When source is a directory:
+ *   - `<source>/SKILL.md` exists → single bundle
+ *   - one or more `<source>/<child>/SKILL.md` exists → batch (list children)
+ *   - otherwise → none
+ */
+function resolveSkillSource(source: string, stat: Stats): SkillSource {
+  if (stat.isFile()) {
+    if (/^SKILL\.md$/i.test(basename(source))) {
+      // User pointed at a SKILL.md — treat the enclosing directory as bundle
+      // so assets, references, and scripts alongside it come along too.
+      return { kind: 'bundle', dir: dirname(source) }
+    }
+    if (source.toLowerCase().endsWith('.md')) return { kind: 'flat', file: source }
+    return { kind: 'none' }
+  }
+  if (!stat.isDirectory()) return { kind: 'none' }
+  if (existsSync(join(source, 'SKILL.md'))) return { kind: 'bundle', dir: source }
+  try {
+    const children = readdirSync(source).filter(entry => {
+      // Ignore hidden and `.git`; the child must be a directory containing SKILL.md.
+      if (entry.startsWith('.')) return false
+      const childDir = join(source, entry)
+      let childStat: Stats
+      try { childStat = statSync(childDir) } catch { return false }
+      if (!childStat.isDirectory()) return false
+      return existsSync(join(childDir, 'SKILL.md'))
+    })
+    if (children.length > 0) return { kind: 'batch', root: source, children }
+  } catch { /* fall through */ }
+  return { kind: 'none' }
+}
+
+/**
+ * Rank at which our workbench-owned provider announces its skills.
+ *
+ * dsh-skill-filesystem's `user-dsh` root sits at rank 400; we register at
+ * 450 so when both providers work the built-in wins duplicate names by
+ * rank. When dsh's provider isn't functioning (missing config, schema
+ * quirk, chokidar didn't fire on Windows), ours still surfaces the file
+ * — which is the reason this provider exists at all.
+ */
+const WORKBENCH_PROVIDER_RANK = 450
+const WORKBENCH_PROVIDER_NAME = 'whaletv-workbench-user-dsh'
+
+/** YAML frontmatter fields the panel and the model catalog care about. */
+interface SkillFrontmatter {
+  name?: string
+  description?: string
+  whenToUse?: string
+  disableModelInvocation?: boolean
+  userInvocable?: boolean
+}
+
+/**
+ * Parse the leading YAML frontmatter block of a SKILL.md. Returns empty
+ * front + full body when the file lacks frontmatter, so downstream logic
+ * can still surface the skill under its directory / filename identity.
+ */
+function parseFrontmatter(raw: string): { front: SkillFrontmatter; body: string } {
+  const match = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/.exec(raw)
+  if (match === null) return { front: {}, body: raw }
+  try {
+    const parsed = parseYaml(match[1] ?? '') as Record<string, unknown> | null
+    const front: SkillFrontmatter = {}
+    if (parsed !== null && typeof parsed === 'object') {
+      if (typeof parsed.name === 'string') front.name = parsed.name
+      if (typeof parsed.description === 'string') front.description = parsed.description
+      const whenToUse = parsed['when-to-use'] ?? parsed.whenToUse
+      if (typeof whenToUse === 'string') front.whenToUse = whenToUse
+      if (typeof parsed['disable-model-invocation'] === 'boolean') front.disableModelInvocation = parsed['disable-model-invocation'] as boolean
+      if (typeof parsed['user-invocable'] === 'boolean') front.userInvocable = parsed['user-invocable'] as boolean
+    }
+    return { front, body: match[2] ?? '' }
+  } catch {
+    return { front: {}, body: raw }
+  }
+}
+
+/**
+ * Scan `$DSH_HOME/skills` for the two skill shapes dsh accepts:
+ *   - `<name>/SKILL.md` bundle (returned with `resourcePath` = the dir)
+ *   - `<name>.md` flat file
+ * Names must be kebab-case; everything else is skipped without noise.
+ */
+interface WorkbenchSkillEntry {
+  name: string
+  path: string
+  resourcePath?: string
+}
+function discoverWorkbenchSkills(): WorkbenchSkillEntry[] {
+  if (!existsSync(USER_DSH_SKILLS_DIR)) return []
+  const results: WorkbenchSkillEntry[] = []
+  let entries: string[]
+  try { entries = readdirSync(USER_DSH_SKILLS_DIR) } catch { return [] }
+  for (const entry of entries) {
+    if (entry.startsWith('.')) continue
+    const abs = join(USER_DSH_SKILLS_DIR, entry)
+    let stats: Stats
+    try { stats = statSync(abs) } catch { continue }
+    if (stats.isDirectory()) {
+      const skillMd = join(abs, 'SKILL.md')
+      if (existsSync(skillMd) && SKILL_NAME_PATTERN.test(entry)) {
+        results.push({ name: entry, path: skillMd, resourcePath: abs })
+      }
+    } else if (stats.isFile() && entry.toLowerCase().endsWith('.md')) {
+      const name = entry.slice(0, -3)
+      if (SKILL_NAME_PATTERN.test(name)) {
+        results.push({ name, path: abs })
+      }
+    }
+  }
+  return results
+}
+
+/**
+ * Register a workbench-owned skill provider scanning `$DSH_HOME/skills`.
+ * Held in a closure so the write routes can `invalidate()` after modifying
+ * the folder — dsh-skill-filesystem's chokidar can miss fresh writes on
+ * Windows, so an explicit invalidation makes catalog updates deterministic.
+ *
+ * @returns the invalidator, callable by handlers after a disk mutation.
+ */
+function registerWorkbenchSkillProvider(ctx: Context): { invalidate: () => void } {
+  const ref: { invalidate: () => void } = { invalidate: () => { /* replaced on register */ } }
+  ctx.skills.registerProvider((control: SkillProviderControl) => {
+    ref.invalidate = control.invalidate
+    return {
+      name: WORKBENCH_PROVIDER_NAME,
+      list: async (_options: SkillLookupOptions): Promise<readonly SkillCandidate[]> => {
+        return discoverWorkbenchSkills().map((entry): SkillCandidate => {
+          let front: SkillFrontmatter = {}
+          try { front = parseFrontmatter(readFileSync(entry.path, 'utf8')).front } catch { /* keep defaults */ }
+          // Prefer the on-disk directory / filename identity: it's what the
+          // panel uses to name and remove skills. Frontmatter is auxiliary.
+          const name = entry.name
+          return {
+            name,
+            description: front.description ?? '',
+            ...(front.whenToUse !== undefined ? { whenToUse: front.whenToUse } : {}),
+            invocation: {
+              modelInvocable: !(front.disableModelInvocation ?? false),
+              userInvocable: front.userInvocable ?? true,
+            },
+            source: 'user-dsh',
+            provider: WORKBENCH_PROVIDER_NAME,
+            rank: WORKBENCH_PROVIDER_RANK,
+            locator: entry.path,
+            path: entry.path,
+            ...(entry.resourcePath !== undefined
+              ? { resourceBase: { kind: 'directory', path: entry.resourcePath } }
+              : {}),
+          }
+        })
+      },
+      get: async (candidate: SkillCandidate, _options: SkillLookupOptions): Promise<SkillDefinition | undefined> => {
+        const path = typeof candidate.locator === 'string' ? candidate.locator : undefined
+        if (path === undefined || !existsSync(path)) return undefined
+        try {
+          const raw = readFileSync(path, 'utf8')
+          const { body } = parseFrontmatter(raw)
+          return { ...candidate, content: body, path } as SkillDefinition
+        } catch {
+          return undefined
+        }
+      },
+    }
+  })
+  return ref
 }
 
 /**
@@ -672,6 +1069,12 @@ function subPath(req: IncomingMessage): string {
  * @param config - schemastery-resolved config (composition entry + user layer + defaults).
  */
 export function apply(ctx: Context, config: Config): void {
+  // Nuke any half-clones left behind by past failed imports before the
+  // routes come online, so a user opening `.staging/` never sees stale
+  // `.git`-only skeletons (usually left by an OAuth / auth failure on
+  // Windows where fs.rmSync lost the race to a still-open git.exe handle).
+  sweepStagingDir()
+
   // Live source thunk: `installSettingsSection` swaps this to read from the
   // settings scope once one is attached. Everything Host-side that needs the
   // current value goes through `source()`, so live edits flow immediately.
@@ -681,6 +1084,15 @@ export function apply(ctx: Context, config: Config): void {
     setSource: (current) => { source = current },
     onChange: () => { /* live-applied fields; nothing derived to invalidate today. */ },
   })
+
+  // Register a workbench-owned SkillProvider so the "工作台技能" panel
+  // sees the files we write even when dsh-skill-filesystem doesn't (missing
+  // config, Windows chokidar quirks, schema-validation drops the plugin).
+  // Same rank order as dsh's user-dsh (400 vs our 450) → dsh wins when both
+  // agree; we fill in when dsh doesn't. Write routes below call
+  // `skillProvider.invalidate()` after mutating disk so the next snapshot
+  // rescans deterministically instead of waiting on a fs watcher.
+  const skillProvider = registerWorkbenchSkillProvider(ctx)
 
   // Closure-scoped so plugin reload starts fresh; a module-level flag would
   // survive HMR and leave the next mount answering 409 forever.
@@ -753,6 +1165,18 @@ export function apply(ctx: Context, config: Config): void {
           return
         }
 
+        // GET /skills/debug — diagnostic surface for "file on disk but not in
+        // the catalog" cases. Compares what dsh-skill-filesystem would scan
+        // against what actually sits under $DSH_HOME/skills, plus the
+        // environment overrides that could point the two at different paths.
+        if (sub === '/skills/debug' && (method === undefined || method === 'GET' || method === 'HEAD')) {
+          void buildSkillDebug(ctx).then(
+            payload => { sendJson(res, 200, payload) },
+            (error: unknown) => { sendJson(res, 500, { ok: false, error: String(error) }) },
+          )
+          return
+        }
+
         // POST /skills/install — write a skill file + register its name.
         if (sub === '/skills/install') {
           if (method !== 'POST') {
@@ -768,13 +1192,26 @@ export function apply(ctx: Context, config: Config): void {
                 if (skillName === undefined) throw new Error('skill 名称不能为空')
                 if (content.trim() === '') throw new Error('skill 内容不能为空')
                 const writtenTo = installSkillOnDisk(skillName, content)
+                // Our own SkillProvider caches nothing, but the registry
+                // caches list() results — invalidate so the next snapshot
+                // rescans disk right away (deterministic, doesn't wait on
+                // chokidar).
+                skillProvider.invalidate()
                 // Reflect ownership in the settings namespace so a later
                 // `/skills` read marks this skill as removable across restarts.
                 const current = source()
                 if (!current.installedSkills.includes(skillName)) {
-                  await ctx.settings.update(WORKBENCH_NAMESPACE, {
-                    installedSkills: [...current.installedSkills, skillName],
-                  })
+                  try {
+                    const settings = ctx.get('settings')
+                    if (settings) {
+                      await settings.update(WORKBENCH_NAMESPACE, {
+                        installedSkills: [...current.installedSkills, skillName],
+                      })
+                    }
+                  } catch (settingsError) {
+                    // Non-fatal: skill is on disk, ownership tracking is best-effort.
+                    ctx.logger?.warn?.(`whaletv-workbench: settings update skipped: ${settingsError}`)
+                  }
                 }
                 const result: WorkbenchSkillInstallResult = { ok: true, writtenTo }
                 sendJson(res, 200, result)
@@ -793,7 +1230,8 @@ export function apply(ctx: Context, config: Config): void {
         }
 
         // POST /skills/import — shallow-clone a git repo and copy the
-        // named skill body into $DSH_HOME/skills/<name>/.
+        // named skill body into $DSH_HOME/skills/. Auto-detects bundle /
+        // flat / batch (a directory whose children each hold a SKILL.md).
         if (sub === '/skills/import') {
           if (method !== 'POST') {
             sendJson(res, 405, { ok: false, error: '仅支持 POST 请求' })
@@ -806,15 +1244,27 @@ export function apply(ctx: Context, config: Config): void {
                 if (typeof request.url !== 'string') throw new Error('url 必须是字符串')
                 if (typeof request.name !== 'string') throw new Error('name 必须是字符串')
                 const outcome = await importSkillFromGit(request)
+                skillProvider.invalidate()
+                // Track ownership across restarts. Batch install may return
+                // multiple names — union them all into installedSkills.
                 const current = source()
-                if (!current.installedSkills.includes(request.name)) {
-                  await ctx.settings.update(WORKBENCH_NAMESPACE, {
-                    installedSkills: [...current.installedSkills, request.name],
-                  })
+                const merged = Array.from(new Set([...current.installedSkills, ...outcome.installed]))
+                if (merged.length !== current.installedSkills.length) {
+                  try {
+                    const settings = (ctx as unknown as { get?: (name: string) => unknown }).get?.('settings') ?? ctx.settings
+                    if (settings !== undefined) {
+                      await (settings as typeof ctx.settings).update(WORKBENCH_NAMESPACE, { installedSkills: merged })
+                    }
+                  } catch (settingsError) {
+                    // Non-fatal: skill is on disk, ownership tracking is best-effort.
+                    console.warn(`whaletv-workbench: settings update skipped: ${String(settingsError)}`)
+                  }
                 }
                 const result: WorkbenchSkillImportResult = {
                   ok: true,
-                  writtenTo: outcome.writtenTo,
+                  installed: outcome.installed,
+                  ...(outcome.skipped !== undefined ? { skipped: outcome.skipped } : {}),
+                  ...(outcome.writtenTo !== undefined ? { writtenTo: outcome.writtenTo } : {}),
                   output: truncate(outcome.output),
                 }
                 sendJson(res, 200, result)
@@ -845,11 +1295,20 @@ export function apply(ctx: Context, config: Config): void {
                 const skillName = cleanString(request.name)
                 if (skillName === undefined) throw new Error('skill 名称不能为空')
                 removeSkillOnDisk(skillName)
+                skillProvider.invalidate()
                 const current = source()
                 if (current.installedSkills.includes(skillName)) {
-                  await ctx.settings.update(WORKBENCH_NAMESPACE, {
-                    installedSkills: current.installedSkills.filter(n => n !== skillName),
-                  })
+                  try {
+                    const settings = ctx.get('settings')
+                    if (settings) {
+                      await settings.update(WORKBENCH_NAMESPACE, {
+                        installedSkills: current.installedSkills.filter(n => n !== skillName),
+                      })
+                    }
+                  } catch (settingsError) {
+                    // Non-fatal: skill is removed from disk, ownership tracking is best-effort.
+                    ctx.logger?.warn?.(`whaletv-workbench: settings update skipped: ${settingsError}`)
+                  }
                 }
                 const result: WorkbenchSkillRemoveResult = { ok: true }
                 sendJson(res, 200, result)

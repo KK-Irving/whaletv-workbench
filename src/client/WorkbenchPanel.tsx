@@ -273,16 +273,24 @@ export function WorkbenchPanel({
    * Re-read the skills catalog through the Host's `/skills` route. Errors
    * live inside the returned WorkbenchSkillList (never thrown), so the
    * panel decides whether to badge them without a separate try/catch.
+   * The full payload is logged to the browser console so users hitting
+   * "why is the section empty?" can diagnose without opening a devtool
+   * network waterfall — one console line surfaces both `complete` and the
+   * skill count directly.
    */
   const reloadSkills = useCallback(async () => {
     actions.setSkillsLoading(true)
     try {
       const next = await loadSkills()
+      // eslint-disable-next-line no-console -- deliberate diagnostic surface for users
+      console.info('[whaletv-workbench] /skills →', next)
       actions.setSkills(next)
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      // eslint-disable-next-line no-console
+      console.warn('[whaletv-workbench] /skills failed:', message)
       actions.setSkills({
-        ok: false, skills: [], complete: false,
-        error: error instanceof Error ? error.message : String(error),
+        ok: false, skills: [], complete: false, error: message,
       })
     } finally {
       actions.setSkillsLoading(false)
@@ -698,19 +706,40 @@ function composeInlineSkill(draft: SkillInlineDraft): string {
   return front + draft.content
 }
 
+/** Normalize any tail-of-path segment to a kebab-case skill identifier. */
+function kebabize(input: string): string {
+  return input
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+}
+
 /**
  * Guess a kebab-case target name from a git URL + sub-path when the user
- * hasn't picked one yet: prefer the sub-path leaf, fall back to the repo
- * name (strip `.git` and any URL fragment).
+ * hasn't picked one yet. Walks sub-path segments from the leaf inward
+ * skipping the reserved `SKILL.md` filename (that's the bundle contract,
+ * not the skill's identity — the parent directory names it). Falls back
+ * to the repo name (strip `.git` and any URL fragment).
+ *
+ * Fixes an earlier bug where `subPath: foo/SKILL.md` derived the name
+ * "skill" (`SKILL.md` → strip .md → lowercase), then the flat-file branch
+ * saved into `$DSH_HOME/skills/skill.md` instead of the real skill name.
  */
 function suggestGitName(url: string, subPath: string): string {
-  const leaf = subPath.split('/').filter(s => s !== '' && s !== '.').pop()
-  if (leaf !== undefined && leaf !== '') {
-    return leaf.replace(/\.md$/i, '').toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '')
+  const segments = subPath.split('/').filter(s => s !== '' && s !== '.')
+  for (let i = segments.length - 1; i >= 0; i--) {
+    const seg = segments[i]
+    // `SKILL.md` (case-insensitive) is the reserved bundle filename — its
+    // parent directory is the meaningful identity, so skip past it.
+    if (/^SKILL\.md$/i.test(seg)) continue
+    const stripped = seg.replace(/\.md$/i, '')
+    const kebab = kebabize(stripped)
+    if (kebab !== '') return kebab
   }
   const trimmed = url.replace(/\.git$/i, '').replace(/[?#].*$/, '')
   const tail = trimmed.split(/[/:]/).filter(s => s !== '').pop() ?? ''
-  return tail.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '')
+  return kebabize(tail)
 }
 
 /**
@@ -728,6 +757,22 @@ function suggestGitName(url: string, subPath: string): string {
  * Removal is only offered for skills the workbench itself owns (Host reports
  * `removable: true`), so project-scoped and bundled skills stay read-only.
  */
+/**
+ * Persistent success notice displayed at the top of the skills section after
+ * a successful install / import. Persists until the user dismisses it (✕)
+ * or hits "刷新" — the previous transient banner disappeared with the form
+ * before the user could read the `writtenTo` path.
+ *
+ * `installed` is the primary display: single-item for bundle/flat imports,
+ * multi-item for batch imports (a repo with several `<child>/SKILL.md`).
+ */
+interface SkillNotice {
+  installed: string[]
+  skipped?: Array<{ name: string; reason: string }>
+  writtenTo?: string
+  gitOutput?: string
+}
+
 function SkillsSection(props: {
   skills: WorkbenchSkillList | null
   skillsLoading: boolean
@@ -746,12 +791,22 @@ function SkillsSection(props: {
   const [gitDraft, setGitDraft] = useState<SkillGitDraft>(emptyGitDraft)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [output, setOutput] = useState<string | null>(null)
+  const [notice, setNotice] = useState<SkillNotice | null>(null)
 
   const filtered = (skills?.skills ?? []).filter(s =>
     query === ''
     || s.name.toLowerCase().includes(query)
     || s.description.toLowerCase().includes(query))
+
+  // How many of the just-installed skills are already visible in the current
+  // catalog. Displayed on the success notice so the user can tell at a
+  // glance whether dsh-skill-filesystem noticed the writes, or whether they
+  // need to hit "刷新" (or wait for chokidar to invalidate).
+  const catalogNames = new Set((skills?.skills ?? []).map(s => s.name))
+  const noticedCount = notice === null
+    ? 0
+    : notice.installed.filter(name => catalogNames.has(name)).length
+  const allNoticedInCatalog = notice !== null && noticedCount === notice.installed.length
 
   const submitInline = async (): Promise<void> => {
     const name = inlineDraft.name.trim()
@@ -760,13 +815,14 @@ function SkillsSection(props: {
     if (content === '') { setError('技能正文不能为空'); return }
     setBusy(true)
     setError(null)
-    setOutput(null)
     try {
-      await installSkill({ name, content: composeInlineSkill(inlineDraft) })
+      const result = await installSkill({ name, content: composeInlineSkill(inlineDraft) })
       setInlineDraft(emptyInlineDraft())
       setShowForm(false)
+      setNotice({ installed: [name], writtenTo: result.writtenTo })
       onReload()
     } catch (err) {
+      // Keep the form open on failure so the user can retry without retyping.
       setError(err instanceof Error ? err.message : String(err))
     } finally {
       setBusy(false)
@@ -780,7 +836,6 @@ function SkillsSection(props: {
     if (name === '') { setError('目标名称不能为空（无法从 URL 与子路径推断）'); return }
     setBusy(true)
     setError(null)
-    setOutput(null)
     try {
       const result = await importSkill({
         url,
@@ -788,11 +843,20 @@ function SkillsSection(props: {
         ...(gitDraft.subPath.trim() !== '' ? { subPath: gitDraft.subPath.trim() } : {}),
         ...(gitDraft.ref.trim() !== '' ? { ref: gitDraft.ref.trim() } : {}),
       })
-      if (result.output !== undefined && result.output !== '') setOutput(result.output)
       setGitDraft(emptyGitDraft())
       setShowForm(false)
+      // Batch imports return an array of installed names; single-skill
+      // imports return a one-element array. Either way `installed` is
+      // authoritative — the user-typed `name` is ignored for batch.
+      setNotice({
+        installed: result.installed && result.installed.length > 0 ? result.installed : [name],
+        ...(result.skipped !== undefined && result.skipped.length > 0 ? { skipped: result.skipped } : {}),
+        ...(result.writtenTo !== undefined ? { writtenTo: result.writtenTo } : {}),
+        ...(result.output !== undefined && result.output !== '' ? { gitOutput: result.output } : {}),
+      })
       onReload()
     } catch (err) {
+      // Preserve the git draft so the user can adjust one field and retry.
       setError(err instanceof Error ? err.message : String(err))
     } finally {
       setBusy(false)
@@ -811,7 +875,7 @@ function SkillsSection(props: {
           <Button
             size="sm"
             variant={showForm ? 'primary' : 'outline'}
-            onClick={() => { setShowForm(v => !v); setError(null); setOutput(null) }}
+            onClick={() => { setShowForm(v => !v); setError(null) }}
             disabled={busy}
           >
             {showForm ? '取消' : '+ 新建技能'}
@@ -825,7 +889,7 @@ function SkillsSection(props: {
             <Button
               size="sm"
               variant={mode === 'inline' ? 'primary' : 'outline'}
-              onClick={() => { setMode('inline'); setError(null); setOutput(null) }}
+              onClick={() => { setMode('inline'); setError(null) }}
               disabled={busy}
               role="tab"
               aria-selected={mode === 'inline'}
@@ -835,7 +899,7 @@ function SkillsSection(props: {
             <Button
               size="sm"
               variant={mode === 'git' ? 'primary' : 'outline'}
-              onClick={() => { setMode('git'); setError(null); setOutput(null) }}
+              onClick={() => { setMode('git'); setError(null) }}
               disabled={busy}
               role="tab"
               aria-selected={mode === 'git'}
@@ -891,16 +955,23 @@ function SkillsSection(props: {
                 onChange={event => { setGitDraft(d => ({ ...d, name: event.target.value })) }}
               />
               <p className={css.skillsHelp}>
-                支持两种形态：<code>&lt;subPath&gt;/SKILL.md</code>（bundle，会连同 assets 一起复制）或
-                <code>&lt;subPath&gt;.md</code>（flat，单文件）。仅接受 http(s) / ssh 协议。
+                子路径可以指向：<br/>
+                &nbsp;• 一个 <strong>包含 SKILL.md 的目录</strong>（bundle，assets/refs 一起复制）<br/>
+                &nbsp;• 一个 <strong>SKILL.md 文件</strong>（自动上溯一级作为 bundle）<br/>
+                &nbsp;• 一个 <strong>flat 的 *.md 文件</strong>（单文件安装）<br/>
+                &nbsp;• 一个 <strong>目录，下面每个子目录各有 SKILL.md</strong>（<em>批量安装</em>，"目标名称"会被忽略，每个子目录用自己名字挂载）<br/>
+                留空 = 仓库根目录同上判定。仅接受 http(s) / ssh 协议。
+              </p>
+              <p className={css.skillsHelp}>
+                <strong>私有仓库</strong>：工作台子进程没有交互终端，无法弹凭据框。请任选一种：
+                （a）先在命令行手动 <code>git clone</code> 一次同一仓库，让 Git Credential Manager 缓存凭据；
+                （b）改用 SSH 地址（<code>git@host:owner/repo.git</code>）+ 配置好的 SSH key；
+                （c）临时用 <code>https://&lt;user&gt;:&lt;token&gt;@host/...</code> 格式内嵌 PAT。
               </p>
             </>
           )}
 
           {error !== null && <p className={css.skillsError} role="alert">{error}</p>}
-          {output !== null && output !== '' && (
-            <pre className={css.skillsOutput}>{output}</pre>
-          )}
           <div className={css.formActions}>
             <Button
               size="sm"
@@ -914,11 +985,61 @@ function SkillsSection(props: {
         </div>
       )}
 
+      {notice !== null && (
+        <div className={css.skillsSuccess} role="status">
+          <div className={css.skillsSuccessHead}>
+            <p className={css.skillsSuccessTitle}>
+              ✓ {notice.installed.length === 1
+                ? `技能「${notice.installed[0]}」已${allNoticedInCatalog ? '安装并挂载' : '写入磁盘'}`
+                : `已批量导入 ${notice.installed.length} 个技能${allNoticedInCatalog ? '，全部已挂载' : `（其中 ${noticedCount} 个已挂载）`}`}
+            </p>
+            <Button
+              size="sm"
+              className={css.dismiss}
+              onClick={() => { setNotice(null) }}
+              aria-label="关闭提示"
+            >
+              ✕
+            </Button>
+          </div>
+          {notice.installed.length > 1 && (
+            <p className={css.skillsSuccessDetail}>
+              {notice.installed.map(n => (
+                <code key={n} style={{ marginRight: 6 }}>{n}</code>
+              ))}
+            </p>
+          )}
+          {notice.writtenTo !== undefined && (
+            <p className={css.skillsSuccessDetail}>
+              {notice.installed.length === 1 ? '文件位置' : '安装到'}：<code>{notice.writtenTo}</code>
+            </p>
+          )}
+          {notice.skipped !== undefined && notice.skipped.length > 0 && (
+            <div className={css.skillsSuccessDetail}>
+              以下条目被跳过：
+              <ul style={{ margin: '4px 0 0 16px', padding: 0 }}>
+                {notice.skipped.map(s => (
+                  <li key={s.name}><code>{s.name}</code> — {s.reason}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {!allNoticedInCatalog && (
+            <p className={css.skillsSuccessDetail}>
+              dsh 技能注册表还没抓到全部新增；点顶部「刷新」按钮或稍候几秒让 chokidar 触发 —— 如果仍然看不到，说明 dsh 里没挂 <code>dsh-skill-filesystem</code>（跑 <code>dsh --profile web --dump-config</code> 确认）。
+            </p>
+          )}
+          {notice.gitOutput !== undefined && (
+            <pre className={css.skillsOutput}>{notice.gitOutput}</pre>
+          )}
+        </div>
+      )}
+
       {skills?.ok === false && skills.error !== undefined && (
         <p className={css.skillsError} role="alert">技能列表读取失败：{skills.error}</p>
       )}
 
-      {skills?.ok === true && filtered.length === 0 && !skillsLoading && (
+      {skills?.ok === true && filtered.length === 0 && !skillsLoading && notice === null && (
         <p className={css.hint}>
           {query === '' ? '当前没有可用的技能。点击「+ 新建技能」写入一份，或从 Git 仓库导入。' : '没有匹配的技能。'}
         </p>

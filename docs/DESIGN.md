@@ -1,6 +1,6 @@
 # WhaleTV 工作台 —— 设计与 UI 规划
 
-> 初版（v0.1）已按本文档实现。本文档同时记录已实现的初版形态与后续演进路线，作为「规划」的长期交付物。
+> 初版（v0.1）已按本文档实现，当前版本 **v0.4.0**。本文档同时记录已实现的形态与后续演进路线，作为「规划」的长期交付物；具体每版变更详见 [CHANGELOG.md](../CHANGELOG.md)。
 
 ## 1. 背景与目标
 
@@ -125,12 +125,24 @@ dsh 是「一切皆插件」架构（Cordis + `dsh.client` Web 插件表）。�
 | v0.2 | 更新前先「检查更新」（`git fetch` + ahead/behind 对比，区分「检查/更新」两个按钮）；更新历史记录 |
 | v0.2 | 常用网页内嵌 iframe 预览（面板内快速查阅，外跳打开） |
 | v0.3 | 条目拖拽排序 / 按项目（D4/X5/STB）分组切换（配置热编辑已提前到本版实现） |
-| v0.3 | 技能条目直接预填会话输入框（依赖 dsh 公开 composer 预填 API 后接入） |
-| v0.4 | 本地应用健康检查（路径存在性探测 + 一键定位）；快捷键唤起工作台 |
-| v0.4 | 中英文 locale 字典接入 dsh locale 系统；更新失败自动回滚上一版本 |
+| v0.3 | ~~技能条目直接预填会话输入框~~ → **v0.4 已实现**：`agent.followup()` 走通 |
+| v0.5 | 本地应用健康检查（路径存在性探测 + 一键定位）；快捷键唤起工作台 |
+| v0.5 | 中英文 locale 字典接入 dsh locale 系统；更新失败自动回滚上一版本 |
+| v0.6 | Skill 版本化：安装带来源 URL + commit SHA 记录，重新导入检测冲突（下一步） |
 | 待定 | MCP 工具快捷调用卡片（把已挂载的 zmind/gerrit/confluence/knowledge MCP 常用操作做成表单卡片，直接驱动模型调用） |
 
 ## 7. 已实现 vs 规划
 
-- ✅ 已实现（初版 + 面板编辑）：双面插件、热插入安装、入口 + 面板 + 搜索 + 四类条目、面板内配置编辑（条目/分组增删改，写回 `workbench.json`，模板 `workbench.example.json` 兜底）、一键更新管线、工作台图标、README。
+**v0.4 里程碑（当前版本）**：
+- ✅ 双面插件基础（v0.1）、面板内配置编辑（v0.2）、一键自更新（v0.2）
+- ✅ 官方 `dsh plugin add` 单命令安装（v0.3）：`dsh.bundle.patch` + `cordis.patch.yml`
+- ✅ Settings 命名空间 + 卡片（v0.3）：`whaletv-workbench` 走 `ctx.settings`
+- ✅ **工作台技能专区完整闭环**（v0.4）：
+  - `ctx.skills.registerProvider` 注册工作台自有 provider，扫 `$DSH_HOME/skills`
+  - 三种技能形态识别：bundle / flat / batch
+  - Git 导入：URL + subPath + ref，含认证失败友好翻译（OAuth / SSO 场景）
+  - 手写正文安装：自动包 YAML frontmatter
+  - `agent.followup()` 一键把 skill 塞进当前会话
+  - 诊断路由 `/skills/debug`
+  - Windows 特化清理（rmSync 8×250ms 重试 + 启动时 sweep staging）
 - ⏳ 用户侧待办：面板「编辑」里填写各系统真实 URL/路径；`git remote add origin` 关联远程并推送；生产模式下更新后手动刷新页面。

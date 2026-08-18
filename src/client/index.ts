@@ -147,16 +147,16 @@ export function apply(ctx: ClientContext): void {
     WorkbenchPanel,
   ))
   // Settings page card — the `settings.plugin.item` slot is declared
-  // `kind: 'list'` (see @deepseek-ai/dsh-client-ui-settings-plugins/client),
-  // so registration takes `id` like the other list slots even though the
-  // cookbook example spells it as `key`. The Plugins tab renders every
-  // registered card in order; the settings namespace connects this card
-  // to its Host counterpart through `ctx.settingsScope.bind`, not through
-  // the slot key.
+  // `kind: 'keyed'` (see @deepseek-ai/dsh-client-ui-settings-plugins/client)
+  // and pairs each card to its Host counterpart by the shared settings
+  // namespace. Registration therefore takes `key: '<settings-namespace>'`,
+  // not `id`. If a future dsh RC flips this back to `kind: 'list'`, the
+  // runtime error will name the missing option again and this pair should
+  // change together with the type file.
   ctx.slots.inject('settings.plugin.item', () => ctx.slots.register(
     {
       name: 'settings.plugin.item',
-      id: 'whaletv-workbench.settings',
+      key: 'whaletv-workbench',
       inject: () => ({
         scope: ctx.settingsScope.bind({ namespace: 'whaletv-workbench' }),
       }),
