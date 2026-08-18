@@ -83,7 +83,7 @@ export const Config: z<Config> = z.object({
 const WORKBENCH_NAMESPACE = settingsNamespace('whaletv-workbench')
 
 /** Host services this plugin uses through ctx. */
-export const inject = ['webServer', 'clientModules', 'skills', 'agents']
+export const inject = ['webServer', 'clientModules', 'skills', 'agents', 'settings']
 
 /** Plugin id — matches the package name and the client bundle graph row. */
 const CLIENT_ID = 'whaletv-workbench'
