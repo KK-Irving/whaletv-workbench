@@ -13,11 +13,19 @@
  * `ctx.slots.inject`, so apply order against ui-sidebar / ui-layout /
  * ui-settings-plugins is free.
  */
-import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
+import type { Context as ClientContext } from '@deepseek-ai/cordis'
+// Type-only: ctx.remote (openWorkspacePath) Context merge from the API remotes.
+import type {} from '@deepseek-ai/dsh-api-remotes/client'
+// Type-only: ctx.slots (SlotRegistry) Context merge, owned by ui-renderer.
+import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import { writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives'
 // Type-only: pull the settings-plugins SlotMap merge (settings.plugin.item).
 import type {} from '@deepseek-ai/dsh-client-ui-settings-plugins/client'
+// Type-only: pull the uiWorkspace Context merge (startSession navigation).
+import type {} from '@deepseek-ai/dsh-client-ui-workspace/client'
 import type { WorkbenchInjected } from './contract.ts'
+// Type-only: the Host Config type parameterizes the settings scope binding.
+import type { Config } from '../index.ts'
 import type {
   WorkbenchConfigSaveResult, WorkbenchSessionFollowupResult, WorkbenchSkillImportRequest,
   WorkbenchSkillImportResult, WorkbenchSkillInstallRequest, WorkbenchSkillInstallResult,
@@ -37,10 +45,13 @@ export type {
 /**
  * Required client services:
  * - slots: keyed / list slot registrations
- * - workspaces: openPath + startSession actions for entry cards
  * - settingsScope: bound namespace scope reads and writes for the settings card
+ * - uiWorkspace: startSession navigation (the workspaces controller no longer
+ *   carries it; dsh moved session-start to the uiWorkspace service)
+ * - remote / remote.session: Host RPC for the native path opener
+ *   (`session.openWorkspacePath` replaced the old client workspaces.openPath)
  */
-export const inject = ['slots', 'workspaces', 'settingsScope']
+export const inject = ['slots', 'settingsScope', 'uiWorkspace', 'remote', 'remote.session']
 
 /**
  * Raise a Host route's JSON payload; non-ok results throw their error text.
@@ -84,10 +95,16 @@ export function apply(ctx: ClientContext): void {
       window.open(url, '_blank', 'noopener,noreferrer')
     },
     openPath: async (path) => {
-      await ctx.workspaces.openPath(path)
+      // dsh ≥ 0.1.2: native path opening is the session-controller RPC
+      // `session.openWorkspacePath` (the client workspaces service lost
+      // openPath when the client runtime package was removed).
+      const result = await ctx.remote.session.openWorkspacePath({ path })
+      if (!result.ok) {
+        throw new Error(`打开路径失败：${result.error.message}`)
+      }
     },
     startSession: () => {
-      ctx.workspaces.startSession()
+      ctx.uiWorkspace.startSession()
     },
     copyPrompt: async (text) => {
       await writeClipboard(text)
@@ -158,7 +175,7 @@ export function apply(ctx: ClientContext): void {
       name: 'settings.plugin.item',
       key: 'whaletv-workbench',
       inject: () => ({
-        scope: ctx.settingsScope.bind({ namespace: 'whaletv-workbench' }),
+        scope: ctx.settingsScope.bind<Config>({ namespace: 'whaletv-workbench' }),
       }),
     },
     SettingsCard,

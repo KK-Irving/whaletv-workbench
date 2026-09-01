@@ -16,7 +16,9 @@
  * changed field so the write queue carries the current revision.
  */
 import { useEffect, useMemo, useState } from 'react'
-import type { SettingsScope, SettingsScopeSnapshot } from '@deepseek-ai/dsh-client-runtime/client'
+// Type-only: the client settings-scope contract lives with ui-settings since
+// dsh folded the schema-form/runtime packages away.
+import type { SettingsScope, SettingsScopeSnapshot } from '@deepseek-ai/dsh-client-ui-settings/client'
 import { Button, Input } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Config } from '../index.ts'
 import css from './SettingsCard.module.css'

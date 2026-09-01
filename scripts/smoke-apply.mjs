@@ -34,9 +34,11 @@ const slots = {
     return () => {}
   },
 }
-const workspaces = { openPath: async () => {}, startSession: () => {} }
+const workspaces = undefined
+const uiWorkspace = { startSession: () => {} }
+const remote = { session: { openWorkspacePath: async () => ({ ok: true, value: { opened: true } }) } }
 const settingsScope = { bind: () => ({ getSnapshot: () => ({ status: 'unavailable' }), subscribe: () => () => {}, set: async () => {}, unset: async () => {} }) }
-const ctx = { slots, workspaces, settingsScope }
+const ctx = { slots, uiWorkspace, remote, settingsScope }
 
 const handoffs = []
 globalThis.window = globalThis
@@ -45,7 +47,7 @@ const mockRequire = (specifier) => {
   if (specifier === 'react' || specifier === 'react/jsx-runtime') {
     return { jsx: () => null, jsxs: () => null, Fragment: null, createElement: () => null, useState: () => [null, () => {}], useEffect: () => {}, useCallback: (f) => f, useMemo: (f) => f(), useRef: () => ({ current: null }) }
   }
-  if (specifier === '@deepseek-ai/dsh-client-runtime/client') {
+  if (specifier === '@deepseek-ai/dsh-client-store') {
     return { __esModule: true, defineStore: () => ({ spec: {}, create: () => ({ actions: {}, getSnapshot: () => ({}), subscribe: () => () => {}, store: {}, clearPersisted: () => {} }) }) }
   }
   return { __esModule: true, writeClipboard: async () => {}, Button() {}, Input() {} }

@@ -2,6 +2,64 @@
 
 Notable changes per version. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) loosely; pre-1.0 minor bumps carry feature-level changes because the API surface is still shaping up.
 
+## 0.5.0 — 2026-09-01
+
+Alignment release for dsh **0.1.2-alpha.3** (after `be531688f3 refactor(client):
+migrate consumers and remove Runtime` and the 0.1.2 client-surface
+reorganizations). On current dsh, the 0.4.0 client bundle crashed at
+materialization (`require("@deepseek-ai/dsh-client-runtime/client") missed the
+module table`) and the host settings seam failed to typecheck — this release
+removes every removed-upstream import and re-points the affected seams.
+
+### Fixed
+
+- **Client bundle no longer requires removed packages.** The client runtime
+  package (`@deepseek-ai/dsh-client-runtime`) was removed upstream on
+  2026-08-23, so the 0.4.0 artifact threw at every page load. `ClientContext`
+  now comes from `@deepseek-ai/cordis`, the store moves to
+  `@deepseek-ai/dsh-client-store` (a platform seed), and the settings-card
+  types to `@deepseek-ai/dsh-client-ui-settings/client`.
+- **Path opening via the session-controller RPC.** The client workspaces
+  service lost `openPath`/`startSession`; the workbench now calls
+  `ctx.remote.session.openWorkspacePath({ path })` (with a friendly error on
+  the `RemoteResult` failure arm) and `ctx.uiWorkspace.startSession()`. The
+  client `inject` list becomes `['slots', 'settingsScope', 'uiWorkspace',
+  'remote', 'remote.session']` and the `ctx.slots` type merge is pulled from
+  `@deepseek-ai/dsh-client-ui-renderer/client`.
+- **Settings seam on the new service API.** The standalone
+  `installSettingsSection` / `settingsNamespace` helpers were folded into
+  `SettingsProvider` as `ctx.settings.installSection(owner, ns, schema, entry,
+  hooks)`; the namespace is now the plain `'whaletv-workbench'` literal
+  (runtime + type-level validation replaced the old helper).
+- **`tsdown` externals trimmed to the shrunken platform table.**
+  `dsh-client-web-react`, `dsh-client-schema-form`, `dsh-client-ui-attachment`
+  and `dsh-client-runtime/client` are gone from the build; the built bundle
+  requires exactly `react`, `react/jsx-runtime`, `@deepseek-ai/dsh-client-store`
+  and `@deepseek-ai/dsh-client-ui-primitives`. The deprecated `noExternal`
+  option became `deps.alwaysBundle`.
+
+### Changed
+
+- **`link-harness-deps.mjs` heals dangling junctions.** dsh's flat fallback
+  (`$DSH_HOME/profiles/node_modules`) only rewrites entries in the current
+  installation generation, so packages dsh removed or renamed left dangling
+  junctions that broke TS resolution. The script now (1) prunes dangling
+  junctions with no discoverable source, and (2) repairs/creates the
+  `@deepseek-ai/*` peer set from the harness checkout (`DSH_HARNESS_ROOT` or
+  the sibling `../deepseek-harness`), indexed by walking `packages/**`.
+- **`dsh.client.inject` graph edges** drop the removed
+  `@deepseek-ai/dsh-client-runtime` row; the three UI rows (sidebar, layout,
+  settings-plugins) remain. Peer dependencies updated to match the new type
+  sources (`dsh-client-store`, `dsh-client-ui-settings`, `dsh-client-ui-workspace`,
+  `dsh-client-ui-renderer`, `dsh-api-remotes` added; runtime / web-react /
+  schema-form removed).
+
+### Notes
+
+- Install/uninstall changes the profile bundle stack, which current dsh does
+  not hot-reload — restart `dsh web` after `dsh plugin add` / `remove`
+  (README updated accordingly). The in-panel self-update remains hot.
+
 ## 0.4.0 — 2026-08-18
 
 Focus of this release: turning "工作台技能" from a fragile shim on top of

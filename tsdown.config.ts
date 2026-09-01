@@ -20,17 +20,20 @@ import { transform } from 'lightningcss'
 const ID = 'whaletv-workbench'
 
 /**
- * The harness's browser platform modules (packages/client/web/src/platform.ts)
- * plus the documented runtime store exemption. Keep in sync when upgrading dsh.
+ * The harness's browser platform seed modules (packages/client/web/src/
+ * platform.ts PLATFORM_MODULES) — the frozen module table a client bundle
+ * may require. dsh 0.1.2 shrank this surface hard: dsh-client-runtime,
+ * dsh-client-web-react, and dsh-client-schema-form were removed upstream,
+ * and the workbench now needs only react (jsx runtime), dsh-client-store,
+ * and dsh-client-ui-primitives at materialization. Keep in sync when
+ * upgrading dsh.
  */
 const CLIENT_EXTERNALS = [
-  'react', 'react/jsx-runtime', 'react-dom', 'react-dom/client', '@deepseek-ai/cordis',
+  'react', 'react/jsx-runtime',
+  '@deepseek-ai/cordis',
+  '@deepseek-ai/dsh-client-store',
   '@deepseek-ai/dsh-client-ui-slots',
-  '@deepseek-ai/dsh-client-web-react',
   '@deepseek-ai/dsh-client-ui-primitives',
-  '@deepseek-ai/dsh-client-ui-attachment',
-  '@deepseek-ai/dsh-client-schema-form',
-  '@deepseek-ai/dsh-client-runtime/client',
 ] as const
 
 const CSS_VIRTUAL_PREFIX = '\0dsh-css:'
@@ -105,7 +108,9 @@ const clientConfig: UserConfig = {
     'import.meta.env': JSON.stringify({ MODE: process.env.NODE_ENV ?? 'production' }),
   },
   // Everything not in the loader module table inlines (clsx and friends).
-  noExternal: (id: string) => (CLIENT_EXTERNALS.includes(id as typeof CLIENT_EXTERNALS[number]) ? undefined : true),
+  deps: {
+    alwaysBundle: (id: string) => (CLIENT_EXTERNALS.includes(id as typeof CLIENT_EXTERNALS[number]) ? undefined : true),
+  },
   plugins: [cssModulesPlugin()],
   outputOptions: {
     entryFileNames: 'client.js',

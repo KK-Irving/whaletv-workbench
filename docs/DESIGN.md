@@ -1,6 +1,6 @@
 # WhaleTV 工作台 —— 设计与 UI 规划
 
-> 初版（v0.1）已按本文档实现，当前版本 **v0.4.0**。本文档同时记录已实现的形态与后续演进路线，作为「规划」的长期交付物；具体每版变更详见 [CHANGELOG.md](../CHANGELOG.md)。
+> 初版（v0.1）已按本文档实现，当前版本 **v0.5.0**（对齐 dsh 0.1.2-alpha.3）。本文档同时记录已实现的形态与后续演进路线，作为「规划」的长期交付物；具体每版变更详见 [CHANGELOG.md](../CHANGELOG.md)。
 
 ## 1. 背景与目标
 
@@ -32,9 +32,9 @@ dsh 是「一切皆插件」架构（Cordis + `dsh.client` Web 插件表）。�
 └────────────────────────────────────────────────────────────────┘
 ```
 
-- **安装**：`$DSH_HOME/profiles/web/`（官方站外插件用户层）——`package.json` 依赖（`link:` 协议）+ `cordis.patch.yml` 插入插件行；patch 层**热重载**，运行中的 dsh web 无需重启即挂载。
-- **依赖解析**：dsh 启动器把内置包平铺到 `$DSH_HOME/profiles/node_modules`，`scripts/link-harness-deps.mjs` 将其镜像为本项目 `node_modules` junction（幂等，pnpm 不参与 @deepseek-ai/* 的管理）。
-- **构建**：`tsdown.config.ts` 双面构建（内联 harness 的 client-bundle preset 关键部分，独立于 harness checkout）：Host 半 ESM external 全部 `@deepseek-ai/*`；Browser 半为 closure-factory artifact（`window.__ModuleLoader__.load({id, factory})`），CSS Modules 由 lightningcss 内联，平台模块（react/cordis/ui-slots/ui-primitives 等）走模块表 external。
+- **安装**：`$DSH_HOME/profiles/web/`（官方站外插件用户层）——`package.json` 依赖（`link:` 协议）+ `cordis.patch.yml` 插入插件行。安装/卸载改变 profile 的 bundle 层栈（写在 `package.json`），当前 dsh 只热重载用户 patch 层（`cordis.patch.yml`），因此 `dsh plugin add/remove` 后需**重启 dsh web** 生效；插件运行期的自更新仍是 `clientModules.rebuilt` 热注入。
+- **依赖解析**：dsh 启动器把内置包平铺到 `$DSH_HOME/profiles/node_modules`，`scripts/link-harness-deps.mjs` 将其镜像为本项目 `node_modules` junction（幂等，pnpm 不参与 @deepseek-ai/* 的管理）。该回退只维护「当前安装代」的包，被移除/改名的历史包会留下悬挂 junction——脚本会清理悬挂项，并从 harness checkout（`DSH_HARNESS_ROOT` 或同级 `../deepseek-harness`）补链 `peerDependencies` 里缺失的包。
+- **构建**：`tsdown.config.ts` 双面构建（内联 harness 的 client-bundle preset 关键部分，独立于 harness checkout）：Host 半 ESM external 全部 `@deepseek-ai/*`；Browser 半为 closure-factory artifact（`window.__ModuleLoader__.load({id, factory})`），CSS Modules 由 lightningcss 内联，平台模块走模块表 external。dsh 0.1.2 收窄了该模块表并移除了 `dsh-client-runtime`——当前 client bundle 只 require `react` / `react/jsx-runtime` / `@deepseek-ai/dsh-client-store` / `@deepseek-ai/dsh-client-ui-primitives`，`ClientContext` 从 `@deepseek-ai/cordis` 取，升级 dsh 时须同步 `CLIENT_EXTERNALS`。
 
 ## 3. UI 布局规划（初版形态）
 
@@ -87,7 +87,7 @@ dsh 是「一切皆插件」架构（Cordis + `dsh.client` Web 插件表）。�
 
 存储与自更新共存策略：
 
-- 用户配置 = 插件目录 `config/workbench.json`（**不入 git**，由 `POST /whaletv/workbench/config` 校验 + 原子写入）；这样面板改配置不会与「一键更新」的 `git pull --ff-only` 冲突。
+- 用户配置 = `$DSH_HOME/whaletv-workbench/workbench.json`（**不入 git**，由 `POST /whaletv/workbench/config` 校验 + 原子写入，面板自动创建）；存到 `$DSH_HOME` 而非插件目录，面板改配置不会与「一键更新」的 `git pull --ff-only` 冲突（旧版存在插件目录内的会在下次读取时自动迁移）。
 - 仓库只带模板 `config/workbench.example.json`（初版预置：网页 Zmind/Gerrit/Confluence/OpenGrok/知识库、文档、应用本机路径、技能 whaletv-dev-power / whale-gerrit / issue-resolver / commit-message）；`workbench.json` 缺失时 Host 读取模板兜底。
 
 保存接口对负载做白名单校验（id/title/description/url/path/prompt，去空白字段、id 唯一、数量上限），写文件采用 tmp + rename 原子替换。
@@ -133,7 +133,14 @@ dsh 是「一切皆插件」架构（Cordis + `dsh.client` Web 插件表）。�
 
 ## 7. 已实现 vs 规划
 
-**v0.4 里程碑（当前版本）**：
+**v0.5 里程碑（当前版本，对齐 dsh 0.1.2-alpha.3）**：
+- ✅ 跟进 dsh 客户端重构：`dsh-client-runtime` / `dsh-client-web-react` / `dsh-client-schema-form` 移除后的全部导入迁移（`ClientContext`←cordis、store←`dsh-client-store`、settings 类型←`dsh-client-ui-settings/client`、`ctx.slots` 类型←`dsh-client-ui-renderer`）
+- ✅ Settings 接入迁到服务方法 `ctx.settings.installSection(...)`（旧 `installSettingsSection`/`settingsNamespace` 已移除）
+- ✅ 开路径改走 `ctx.remote.session.openWorkspacePath`，新建会话改走 `ctx.uiWorkspace.startSession`
+- ✅ `link-harness-deps.mjs` 清理悬挂 junction + 从 checkout 补链缺失 peer
+- ✅ 三个 smoke（client/apply/host）与 `tsc --noEmit` 全绿
+
+**v0.4 里程碑**：
 - ✅ 双面插件基础（v0.1）、面板内配置编辑（v0.2）、一键自更新（v0.2）
 - ✅ 官方 `dsh plugin add` 单命令安装（v0.3）：`dsh.bundle.patch` + `cordis.patch.yml`
 - ✅ Settings 命名空间 + 卡片（v0.3）：`whaletv-workbench` 走 `ctx.settings`

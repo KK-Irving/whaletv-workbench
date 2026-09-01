@@ -44,6 +44,8 @@ import type {} from '@deepseek-ai/dsh-client-modules'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 // Type-only: ctx.agents context merge.
 import type {} from '@deepseek-ai/dsh-agent'
+// Type-only: ctx.settings (SettingsProvider.installSection/update) context merge.
+import type {} from '@deepseek-ai/dsh-settings'
 // ctx.skills context merge + value imports for the workbench-owned provider.
 import type {
   SkillCandidate, SkillDefinition, SkillLookupOptions, SkillProviderControl,
@@ -51,7 +53,6 @@ import type {
 import { parse as parseYaml } from 'yaml'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
-import { installSettingsSection, settingsNamespace } from '@deepseek-ai/dsh-settings'
 import z from '@deepseek-ai/schemastery'
 import type {
   WorkbenchConfig, WorkbenchGroup, WorkbenchItem, WorkbenchSessionFollowupRequest,
@@ -84,19 +85,22 @@ export const Config: z<Config> = z.object({
   installedSkills: z.array(z.string()).default([]),
 })
 
-/** Settings namespace: the join key between the Host register and the browser card. */
-const WORKBENCH_NAMESPACE = settingsNamespace('whaletv-workbench')
+/**
+ * Settings namespace: the join key between the Host register and the browser
+ * card. dsh ≥ 0.1.2 validates namespaces at runtime (lowercase hyphenated
+ * identifier) and at the type level, so the plain literal replaces the old
+ * `settingsNamespace(...)` helper (removed upstream).
+ */
+const WORKBENCH_NAMESPACE = 'whaletv-workbench'
 
 /**
  * Host services this plugin uses through ctx.
  *
- * `settings` is declared here even though `installSettingsSection` internally
- * does its own `ctx.inject(["settings"], ...)` — that scoped inject only makes
- * `settings` visible inside the callback, not on the outer ctx the route
- * handlers close over. The install/import/remove skill routes reach into
- * `ctx.settings.update(...)` to keep the `installedSkills` registry in sync,
- * and without this declaration Cordis rejects the read with "cannot get
- * property settings without inject".
+ * `settings` is declared here even though `SettingsProvider.installSection`
+ * attaches its namespace through the calling fiber — the skill install /
+ * import / remove routes reach into `ctx.settings.update(...)` to keep the
+ * `installedSkills` registry in sync, and without this declaration Cordis
+ * rejects the read with "cannot get property settings without inject".
  */
 export const inject = ['webServer', 'clientModules', 'skills', 'agents', 'settings']
 
@@ -1075,12 +1079,16 @@ export function apply(ctx: Context, config: Config): void {
   // Windows where fs.rmSync lost the race to a still-open git.exe handle).
   sweepStagingDir()
 
-  // Live source thunk: `installSettingsSection` swaps this to read from the
+  // Live source thunk: `installSection` swaps this to read from the
   // settings scope once one is attached. Everything Host-side that needs the
   // current value goes through `source()`, so live edits flow immediately.
   let source: () => Config = () => config
 
-  installSettingsSection(ctx, WORKBENCH_NAMESPACE, Config, config, {
+  // dsh ≥ 0.1.2: the standalone `installSettingsSection` helper was folded
+  // into the settings service as `SettingsProvider.installSection(owner, ns,
+  // schema, entry, hooks)` — same layering (entry = composition base), same
+  // hooks shape ({ setSource, onChange }).
+  ctx.settings.installSection(ctx, WORKBENCH_NAMESPACE, Config, config, {
     setSource: (current) => { source = current },
     onChange: () => { /* live-applied fields; nothing derived to invalidate today. */ },
   })

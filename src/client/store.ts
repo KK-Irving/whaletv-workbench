@@ -4,7 +4,7 @@
  * shared by the sidebar entry and the panel registrations (root scope), so
  * both surfaces read and mutate the same live instance.
  */
-import { defineStore, type EngineStoreHandle } from '@deepseek-ai/dsh-client-runtime/client'
+import { defineStore, type EngineStoreHandle } from '@deepseek-ai/dsh-client-store'
 import type { WorkbenchSkillList, WorkbenchState } from '../shared.ts'
 
 /** Workbench store state. */

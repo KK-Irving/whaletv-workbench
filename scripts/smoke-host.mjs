@@ -72,8 +72,16 @@ try {
     // Settings.update is called by the /skills/install and /skills/remove
     // routes to keep the installed-skills registry in sync; a noop suffices
     // here — the smoke test does not exercise those write routes.
+    // installSection is the dsh ≥ 0.1.2 settings seam (the standalone
+    // installSettingsSection helper was folded into the service): the mock
+    // accepts the registration and immediately hands back the entry thunk,
+    // which is what feeds source() on the state route.
     settings: {
       update: async () => {},
+      installSection: (_owner, _ns, _schema, entry, hooks) => {
+        hooks?.setSource?.(() => entry)
+        hooks?.onChange?.()
+      },
     },
   }
   mod.apply(ctx, { gitRemote: '', customSkillDirs: [], installedSkills: [] })

@@ -4,7 +4,7 @@ WhaleTV 工作台 —— DeepSeek Harness（`dsh`）的站外 Web 插件：把�
 
 ## 特性
 
-- **零侵入安装**：不改动 deepseek-harness 源码，通过 dsh 官方的 profile 用户层（`$DSH_HOME/profiles/web`）安装；patch 层热重载，**运行中的 dsh web 无需重启**即挂载插件。
+- **零侵入安装**：不改动 deepseek-harness 源码，通过 dsh 官方的 profile 用户层（`$DSH_HOME/profiles/web`）安装；安装/卸载改变 bundle 层栈，**重启 dsh web 生效**（托盘 → 重启 Web 服务）；插件运行期的自更新仍是 `clientModules.rebuilt` 热注入，无需重启。
 - **侧边栏入口**：侧边栏底部（设置旁）新增「WhaleTV 工作台」入口（工作台图标 + 文案；折叠为窄栏时只显示图标）。
 - **工作台面板**（`shell.overlay` 悬浮层）：
   - 分组卡片：网页 / 文档 / 应用 / 技能，支持搜索过滤；
@@ -45,7 +45,7 @@ WhaleTV 工作台 —— DeepSeek Harness（`dsh`）的站外 Web 插件：把�
 └────────────────────────────────────────────────────────────────┘
 ```
 
-依赖解析与 harness 官方站外插件路径一致：安装时 `dsh` 启动器已把内置包平铺到 `$DSH_HOME/profiles/node_modules`，本项目用 `scripts/link-harness-deps.mjs` 将该回退镜像为 `node_modules` junction（幂等）。
+依赖解析与 harness 官方站外插件路径一致：安装时 `dsh` 启动器已把内置包平铺到 `$DSH_HOME/profiles/node_modules`，本项目用 `scripts/link-harness-deps.mjs` 将该回退镜像为 `node_modules` junction（幂等）。dsh 0.1.2 起该回退只修复"当前安装代"的包，被移除/改名的历史包会留下悬挂 junction——脚本会清理它们，并直接从 harness checkout（`DSH_HARNESS_ROOT` 或同级 `../deepseek-harness`）补链 `peerDependencies` 里缺失的包。
 
 ## 安装
 
@@ -78,7 +78,7 @@ git 直装会触发本包的 `prepare` 脚本自动构建 `lib/`。首次可能�
 dsh plugin --profile web remove whaletv-workbench
 ```
 
-安装 / 卸载完刷新 `http://127.0.0.1:3080`；运行中的 dsh web 热加载 profile patch，自动挂载或卸载，无需重启。
+安装 / 卸载后**重启 dsh web**（托盘菜单 → 重启 Web 服务）再刷新 `http://127.0.0.1:3080`。bundle 层栈写在 profile 的 `package.json`，当前 dsh 只对用户 patch 层（`cordis.patch.yml`）做热重载。
 
 ### 备选：自研 `install-profile.mjs`（旧版兼容）
 
@@ -162,7 +162,7 @@ node scripts/install-profile.mjs web
 
 ## 版本
 
-当前版本 **v0.4.0**。每次发版的变更详见 [CHANGELOG.md](./CHANGELOG.md)。面板顶部会显示实际运行的版本号（读自 `package.json`），跟这里对齐即可。
+当前版本 **v0.5.0**（对齐 dsh 0.1.2-alpha.3）。每次发版的变更详见 [CHANGELOG.md](./CHANGELOG.md)。面板顶部会显示实际运行的版本号（读自 `package.json`），跟这里对齐即可。
 
 ## License
 
