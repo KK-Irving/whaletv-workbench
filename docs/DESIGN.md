@@ -1,6 +1,6 @@
 # WhaleTV 工作台 —— 设计与 UI 规划
 
-> 初版（v0.1）已按本文档实现，当前版本 **v0.5.0**（对齐 dsh 0.1.2-alpha.3）。本文档同时记录已实现的形态与后续演进路线，作为「规划」的长期交付物；具体每版变更详见 [CHANGELOG.md](../CHANGELOG.md)。
+> 初版（v0.1）已按本文档实现，当前版本 **v0.5.1**（对齐 dsh 0.1.2-alpha.3）。本文档同时记录已实现的形态与后续演进路线，作为「规划」的长期交付物；具体每版变更详见 [CHANGELOG.md](../CHANGELOG.md)。
 
 ## 1. 背景与目标
 
@@ -133,7 +133,10 @@ dsh 是「一切皆插件」架构（Cordis + `dsh.client` Web 插件表）。�
 
 ## 7. 已实现 vs 规划
 
-**v0.5 里程碑（当前版本，对齐 dsh 0.1.2-alpha.3）**：
+**v0.5.1 里程碑（当前版本）**：
+- ✅ 技能专区「使用」改为在**当前会话**内联引用：把 `/<技能名>` 写进当前会话输入框（`ctx.conversation.input.for(scope).setDraft` + `ctx.sessions` 取当前会话与 scope），并关闭面板，由用户回车发送；无当前会话时提示先打开会话。取代原「followup 到当前会话 / 退回新建会话」。
+
+**v0.5.0 里程碑（对齐 dsh 0.1.2-alpha.3）**：
 - ✅ 跟进 dsh 客户端重构：`dsh-client-runtime` / `dsh-client-web-react` / `dsh-client-schema-form` 移除后的全部导入迁移（`ClientContext`←cordis、store←`dsh-client-store`、settings 类型←`dsh-client-ui-settings/client`、`ctx.slots` 类型←`dsh-client-ui-renderer`）
 - ✅ Settings 接入迁到服务方法 `ctx.settings.installSection(...)`（旧 `installSettingsSection`/`settingsNamespace` 已移除）
 - ✅ 开路径改走 `ctx.remote.session.openWorkspacePath`，新建会话改走 `ctx.uiWorkspace.startSession`
@@ -149,7 +152,7 @@ dsh 是「一切皆插件」架构（Cordis + `dsh.client` Web 插件表）。�
   - 三种技能形态识别：bundle / flat / batch
   - Git 导入：URL + subPath + ref，含认证失败友好翻译（OAuth / SSO 场景）
   - 手写正文安装：自动包 YAML frontmatter
-  - `agent.followup()` 一键把 skill 塞进当前会话
+  - ~~`agent.followup()` 一键把 skill 塞进当前会话~~ → **v0.5.1 改为**在当前会话输入框内联 `/<技能名>`（`ctx.conversation.input...setDraft`）
   - 诊断路由 `/skills/debug`
   - Windows 特化清理（rmSync 8×250ms 重试 + 启动时 sweep staging）
 - ⏳ 用户侧待办：面板「编辑」里填写各系统真实 URL/路径；`git remote add origin` 关联远程并推送；生产模式下更新后手动刷新页面。

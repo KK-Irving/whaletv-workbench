@@ -14,7 +14,7 @@ WhaleTV 工作台 —— DeepSeek Harness（`dsh`）的站外 Web 插件：把�
   - **面板内编辑**：右上角「编辑」进入编辑模式，直接增删改条目与分组（名称 / 描述 / 类型 url·path·prompt / 目标值），保存即写回配置并刷新，无需手工编辑 JSON。
 - **工作台技能专区**（对接 `ctx.skills`）：面板底部列出所有 dsh 已发现的技能（`SkillRegistry.snapshot()`），显示来源徽标。
   - **自带 SkillProvider**：工作台在 `ctx.skills.registerProvider` 上注册一个 fallback provider（rank 450），主动扫 `$DSH_HOME/skills`——即使 dsh 官方 provider 出问题，"工作台技能"仍能列出安装的技能。
-  - **「使用」**：调 `agent.followup()` 把"调用技能：xxx"发到当前会话（未找到会话时退回剪贴板 + 新会话）。
+  - **「使用」**：把 `/<技能名>` 直接填进**当前会话**的输入框（走 dsh 的 `/` 技能触发器，`ctx.conversation.input.for(scope).setDraft`），并关闭工作台面板，由你确认后回车发送——在当前会话里直接引用该 skill，而不是新开会话。未打开任何会话时提示先打开/新建会话。
   - **「+ 新建技能」两种模式**：
     - **手写正文**：填入 name / description / 正文 → 自动包 YAML frontmatter 写到 `$DSH_HOME/skills/<name>/SKILL.md`。
     - **从 Git 仓库导入**：URL + 可选 ref + 可选子路径 → 浅克隆到 staging → 自动识别三种形态：**bundle**（含 SKILL.md 的目录，连同 assets 一起复制）/ **flat**（单 `.md`）/ **batch**（parent 目录下多个 `<child>/SKILL.md`，一次装全）。
@@ -162,7 +162,7 @@ node scripts/install-profile.mjs web
 
 ## 版本
 
-当前版本 **v0.5.0**（对齐 dsh 0.1.2-alpha.3）。每次发版的变更详见 [CHANGELOG.md](./CHANGELOG.md)。面板顶部会显示实际运行的版本号（读自 `package.json`），跟这里对齐即可。
+当前版本 **v0.5.1**（对齐 dsh 0.1.2-alpha.3）。每次发版的变更详见 [CHANGELOG.md](./CHANGELOG.md)。面板顶部会显示实际运行的版本号（读自 `package.json`），跟这里对齐即可。
 
 ## License
 

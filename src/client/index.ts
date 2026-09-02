@@ -16,8 +16,16 @@
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
 // Type-only: ctx.remote (openWorkspacePath) Context merge from the API remotes.
 import type {} from '@deepseek-ai/dsh-api-remotes/client'
+// The client Session object layer. Imported as an explicit type (not the
+// ambient `ctx.sessions` merge) because the Host half also pulls in core
+// dsh-session's conflicting `sessions: SessionStore` merge into the shared
+// tsc program — the cast below picks the client ISessions unambiguously.
+import type { ISessions } from '@deepseek-ai/dsh-api-session-controller/client'
 // Type-only: ctx.slots (SlotRegistry) Context merge, owned by ui-renderer.
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
+// The per-session input resolver, acquired by explicit type for symmetry with
+// ISessions above.
+import type { IConversation } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import { writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives'
 // Type-only: pull the settings-plugins SlotMap merge (settings.plugin.item).
 import type {} from '@deepseek-ai/dsh-client-ui-settings-plugins/client'
@@ -50,8 +58,13 @@ export type {
  *   carries it; dsh moved session-start to the uiWorkspace service)
  * - remote / remote.session: Host RPC for the native path opener
  *   (`session.openWorkspacePath` replaced the old client workspaces.openPath)
+ * - sessions: current-session selection + per-session scope resolution
+ * - conversation: per-session input resolver, to drop `/<skill>` into the
+ *   current session's composer
  */
-export const inject = ['slots', 'settingsScope', 'uiWorkspace', 'remote', 'remote.session']
+export const inject = [
+  'slots', 'settingsScope', 'uiWorkspace', 'remote', 'remote.session', 'sessions', 'conversation',
+]
 
 /**
  * Raise a Host route's JSON payload; non-ok results throw their error text.
@@ -141,6 +154,20 @@ export function apply(ctx: ClientContext): void {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ prompt, ...(sessionId !== undefined ? { sessionId } : {}) }),
       }),
+    referenceSkill: (name) => {
+      // Reference the skill inline in the CURRENT session: write `/<name>`
+      // into its composer draft and let the user send it (dsh's `/` skill
+      // trigger resolves it), instead of spawning a new session.
+      const sessions = ctx.get('sessions') as unknown as ISessions | undefined
+      const conversation = ctx.get('conversation') as unknown as IConversation | undefined
+      if (sessions === undefined || conversation === undefined) return { ok: false, reason: 'no-session' }
+      const currentId = sessions.list.getSnapshot().current
+      if (currentId === undefined) return { ok: false, reason: 'no-session' }
+      const actx = sessions.scope(currentId)
+      if (actx === undefined) return { ok: false, reason: 'no-session' }
+      conversation.input.for(actx).setDraft(`/${name}`)
+      return { ok: true }
+    },
   })
 
   ctx.slots.inject('sidebar.footer.action', () => ctx.slots.register(

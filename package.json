@@ -1,6 +1,6 @@
 {
   "name": "whaletv-workbench",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "private": true,
   "description": "WhaleTV 工作台插件：网页/文档/应用/技能一键跳转 + 点击即用的自更新，热插入 DeepSeek Harness (dsh) Web 界面",
   "license": "MIT",
@@ -60,8 +60,10 @@
     "@deepseek-ai/cordis": "*",
     "@deepseek-ai/dsh-agent": "*",
     "@deepseek-ai/dsh-api-remotes": "*",
+    "@deepseek-ai/dsh-api-session-controller": "*",
     "@deepseek-ai/dsh-client-modules": "*",
     "@deepseek-ai/dsh-client-store": "*",
+    "@deepseek-ai/dsh-client-ui-conversation": "*",
     "@deepseek-ai/dsh-client-ui-layout": "*",
     "@deepseek-ai/dsh-client-ui-primitives": "*",
     "@deepseek-ai/dsh-client-ui-renderer": "*",

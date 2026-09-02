@@ -49,6 +49,13 @@ export type WorkbenchInjected = {
    * the session id whenever it can).
    */
   followup: (prompt: string, sessionId?: string) => Promise<WorkbenchSessionFollowupResult>
+  /**
+   * Drop `/<skillName>` into the CURRENT session's composer (not a new
+   * session), so the user references the skill inline via dsh's `/` trigger
+   * and sends it themselves. Returns `{ ok: false, reason: 'no-session' }`
+   * when no session is open to receive the draft.
+   */
+  referenceSkill: (name: string) => { ok: boolean; reason?: 'no-session' }
 }
 
 /** Full sidebar entry props: owner wide flag + store share + injected face. */

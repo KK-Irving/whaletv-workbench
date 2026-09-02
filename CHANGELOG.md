@@ -2,6 +2,28 @@
 
 Notable changes per version. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) loosely; pre-1.0 minor bumps carry feature-level changes because the API surface is still shaping up.
 
+## 0.5.1 — 2026-09-01
+
+### Changed
+
+- **技能专区「使用」改为在当前会话内联引用 skill.** 原先「使用」走
+  `agent.followup()` 把"请调用技能：xxx"作为一轮对话发出（无会话时退回新建
+  会话），现在改为把 `/<技能名>` 写进**当前会话**的输入框并关闭面板，由用户
+  确认后回车，通过 dsh 的 `/` 技能触发器在当前会话内联引用该 skill。实现走
+  `ctx.sessions`（取 `list.getSnapshot().current` 与 `scope(id)`）+
+  `ctx.conversation.input.for(scope).setDraft(\`/\${name}\`)`；两个服务经
+  `ctx.get(...)` 显式取用并断言到客户端 `ISessions` / `IConversation`
+  类型，避开 Host 侧 core `dsh-session` 的 `sessions: SessionStore` 环境
+  合并冲突。无当前会话时弹提示，请先打开/新建会话。
+- **客户端注入 + peer 依赖.** client `inject` 增加 `sessions`、
+  `conversation`；`peerDependencies` 增加
+  `@deepseek-ai/dsh-api-session-controller`、
+  `@deepseek-ai/dsh-client-ui-conversation`。注入面 `WorkbenchInjected` 新增
+  `referenceSkill(name)`，`followup` 仍保留给 `prompt` 类型的条目卡片
+  （"在会话中使用"）。client bundle 的外部 require 不变（仍只有 react /
+  jsx-runtime / dsh-client-store / dsh-client-ui-primitives——两个新服务是
+  cordis service，经 `ctx.get` 取用，不进模块表）。
+
 ## 0.5.0 — 2026-09-01
 
 Alignment release for dsh **0.1.2-alpha.3** (after `be531688f3 refactor(client):

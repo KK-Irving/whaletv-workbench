@@ -225,6 +225,7 @@ export function WorkbenchPanel({
   importSkill,
   removeSkill,
   followup,
+  referenceSkill,
 }: WorkbenchPanelProps) {
   const open = useStore(s => s.open)
   const search = useStore(s => s.search)
@@ -475,16 +476,19 @@ export function WorkbenchPanel({
     }
   }
   /**
-   * "Use skill" flow: prime a fresh session with a request to invoke the
-   * named skill. The dsh `skill({name})` tool then loads its body on model
-   * demand — no need to shove the whole markdown into the composer.
+   * "Use skill" flow: reference the skill inline in the CURRENT session —
+   * drop `/<skillName>` into its composer (dsh's `/` trigger resolves it) and
+   * close the panel so the composer is in view; the user edits/sends it
+   * themselves. Falls back to a hint when no session is open to receive it.
    */
-  const handleSkillUse = async (skillName: string): Promise<void> => {
-    const invocation = `请调用技能：${skillName}`
-    const result = await followup(invocation).catch(() => ({ ok: false as const }))
-    if (!result.ok) {
-      await handleCopy(invocation)
-      startSession()
+  const handleSkillUse = (skillName: string): void => {
+    const result = referenceSkill(skillName)
+    if (result.ok) {
+      actions.setOpen(false)
+      return
+    }
+    if (result.reason === 'no-session') {
+      window.alert('请先打开或新建一个会话，再从工作台引用技能。')
     }
   }
   /** Uninstall a workbench-managed skill by name; disk + settings registry entry. */
@@ -640,7 +644,7 @@ export function WorkbenchPanel({
             query={query}
             installSkill={installSkill}
             importSkill={importSkill}
-            onUse={(name) => { void handleSkillUse(name) }}
+            onUse={(name) => { handleSkillUse(name) }}
             onRemove={(name) => { void handleSkillRemove(name) }}
             onReload={() => { void reloadSkills() }}
           />
