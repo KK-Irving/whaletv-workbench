@@ -2,6 +2,27 @@
 
 Notable changes per version. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) loosely; pre-1.0 minor bumps carry feature-level changes because the API surface is still shaping up.
 
+## 0.6.0 — 2026-09-03
+
+### Added
+
+- **「打开网页」可在 dsh 桌面客户端内新标签页打开.** `openUrl` 在检测到
+  Electron 客户端桥（`window.dshDesktop`）时，给 `window.open` 的 features
+  追加 `dsh-tab` 标记；配套的 dsh-web-launcher 主进程（v2.0.6+，`electron/src/main/index.js`
+  的 window-open 处理器）把带该标记的 URL 收进客户端自己的标签页，而不是
+  `shell.openExternal` 交给系统默认浏览器。普通浏览器忽略未知 feature，
+  行为回落为默认浏览器新标签页——两端任缺其一都不劣化。
+
+### Changed
+
+- **侧边栏入口悬停效果与 dsh 原生一致.** 入口按钮原先用不透明的
+  `--dsw-specific-sidebar-nav-item-hover`（该 token 实际属于设置弹窗导航格）
+  加自创几何（34px 高 / 8px 圆角 / 13px 字号 / 次级墨水悬停变色），与紧邻的
+  Settings 触发行及全站悬停面不一致。现完全对齐：42px 高 / 12px 圆角 /
+  14px/22px / 主色墨水、共享的半透明 `--dsw-alias-interactive-bg-hover`、
+  ±2px 光学外扩、激活态 `interactive-bg-active`、折叠栏 36×36 圆形；原生
+  `title` 提示换成 dsh 样式化 `Tooltip`（`delayMs: 500`，宽栏禁用）。
+
 ## 0.5.1 — 2026-09-01
 
 ### Changed

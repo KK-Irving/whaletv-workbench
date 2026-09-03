@@ -105,7 +105,13 @@ export function apply(ctx: ClientContext): void {
 
   const injected = (): WorkbenchInjected => ({
     openUrl: (url) => {
-      window.open(url, '_blank', 'noopener,noreferrer')
+      // Inside the Electron desktop client (dsh-web-launcher), hand the URL
+      // to the client's own tabbed browser: its window-open handler treats
+      // the 'dsh-tab' window feature as "open a client tab" instead of
+      // shell.openExternal. Plain browsers ignore the unknown feature and
+      // open a normal tab in the default browser.
+      const inDesktop = (window as unknown as { dshDesktop?: unknown }).dshDesktop !== undefined
+      window.open(url, '_blank', inDesktop ? 'noopener,noreferrer,dsh-tab' : 'noopener,noreferrer')
     },
     openPath: async (path) => {
       // dsh ≥ 0.1.2: native path opening is the session-controller RPC

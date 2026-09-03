@@ -100,7 +100,7 @@ node scripts/install-profile.mjs web
 
 配置文件写入 **`$DSH_HOME/whaletv-workbench/workbench.json`**（**本地用户文件，不入 git**，由面板自动创建）。仓库里只带模板 `config/workbench.example.json`：首次读取没有用户文件时自动使用模板，第一次在面板里保存后生成自己的配置。因为配置存到 `$DSH_HOME` 而不是插件目录，「面板改配置」与「一键更新」的 `git pull` 永不冲突。旧版把 `workbench.json` 存在插件目录内的用户会在下次读取时被自动迁移到新路径。
 
-每条目的动作由字段决定（三者取一）：`url` → 新标签页打开网页；`path` → 宿主默认程序打开本地文件/应用；`prompt` → 技能（复制提示词 + 新建会话）。都为空则显示「待配置」。
+每条目的动作由字段决定（三者取一）：`url` → 新标签页打开网页（在 **dsh 桌面客户端**（Electron，需 v2.0.6+ 且带 `dsh-tab` 处理逻辑）内作为客户端内新标签页打开；普通浏览器环境下则在默认浏览器新标签页打开）；`path` → 宿主默认程序打开本地文件/应用；`prompt` → 技能（复制提示词 + 新建会话）。都为空则显示「待配置」。
 
 ## 一键更新
 
@@ -145,7 +145,7 @@ node scripts/install-profile.mjs web
 - **`src/index.ts` / `scripts/install-profile.mjs` 使用 `child_process`**：为「一键自更新」流水线所需（`git pull` → `pnpm install` → `pnpm run bundle` → 热注入）。全部使用 `execFile` / `execFileSync` + **数组参数** + **硬编码命令**，不拼接用户输入，无 shell 注入路径。Windows 上对 `pnpm/npm` 启用 `shell: true` 是因为它们是 `.cmd` shim，此时参数亦全部硬编码。
 - **HTTP 路由 `/whaletv/workbench/*`**：由 dsh 的 `webServer` 挂载在**一个** `kind: 'prefix'` 位上（内部按子路径分发），默认仅绑定 `127.0.0.1`（同源）；`POST /config` 的 JSON body 只用于写 `workbench.json`，经白名单校验（字段白名单、id 唯一、条目/分组数量上限、512KB body 上限），不进入任何 exec 参数。`POST /skills/install` 只写 `$DSH_HOME/skills/<name>/SKILL.md`（对 name 做 kebab-case 强校验，`skill` 之类的保留字直接拒），不接受任意路径；`POST /skills/import` 只克隆到 `$DSH_HOME/whaletv-workbench/.staging/` 的临时目录再复制到 `$DSH_HOME/skills/`，URL 通过白名单（仅 `http(s)/ssh`，拒绝 `file://`），子路径拒 `..`；`POST /session/followup` 只调 `agent.followup()`（模型输入通道，不执行代码）。
 - **Git 子进程**：所有 `execFile` 传给 `git`/`pnpm` 的 env 都会剥掉两类噪音：pnpm 11 的 `NPM_CONFIG_MANAGE_PACKAGE_MANAGER_VERSIONS`（避免 npm warn）与交互式凭据环境（`GIT_TERMINAL_PROMPT=0` + `GCM_INTERACTIVE=Never`，确保私有仓库鉴权失败时**快速报错**而不是挂在等 tty）。
-- **`src/client/index.ts` `window.open`**：使用 `_blank` + `noopener,noreferrer`（阻断新页面对 opener 的引用）。
+- **`src/client/index.ts` `window.open`**：使用 `_blank` + `noopener,noreferrer`（阻断新页面对 opener 的引用）。在 dsh 桌面客户端内追加 `dsh-tab` 窗口 feature 标记，由客户端的 window-open 处理器把 URL 收进客户端自己的标签页（不改变 sandbox 边界，只是「在哪个浏览器里开」的路由约定）。
 - **`process.env` 读取**：仅 `DSH_HOME`（安装目录定位）与 `NODE_ENV`（构建期常量）两处，标准用法。
 
 ## Learn more

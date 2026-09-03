@@ -1,6 +1,6 @@
 {
   "name": "whaletv-workbench",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "private": true,
   "description": "WhaleTV 工作台插件：网页/文档/应用/技能一键跳转 + 点击即用的自更新，热插入 DeepSeek Harness (dsh) Web 界面",
   "license": "MIT",
