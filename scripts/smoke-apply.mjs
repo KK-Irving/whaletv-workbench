@@ -3,10 +3,10 @@
  * against a mock ClientContext whose slots registry records the registration
  * options. Verifies the slot contract that bit us once:
  *   - injections target exactly the three declared slots
- *     ('sidebar.footer.action', 'shell.overlay', 'settings.plugin.item')
- *   - each register carries name = the declared slot key and a unique id/key
- *     (list slots require options.id; keyed slots require options.key)
- *   - the sidebar entry and panel share one store handle; the settings card
+ *     ('sidebar.footer.action', 'shell.overlay', 'settings.plugins.tab')
+ *   - each register carries name = the declared slot key and a unique id
+ *     (all three are `kind: 'list'` — list slots require options.id)
+ *   - the sidebar entry and panel share one store handle; the settings tab
  *     registers no store (its data is the settings scope, not the panel's).
  * Usage: node scripts/smoke-apply.mjs
  */
@@ -65,23 +65,20 @@ if (handoffs.length !== 1) throw new Error(`expected 1 handoff, got ${handoffs.l
 const exports = handoffs[0].factory(mockRequire)
 exports.apply(ctx)
 
-// sidebar.footer.action and shell.overlay are declared `kind: 'list'` by
-// their host packages, so their registrations carry `id`. The
-// settings.plugin.item slot is `kind: 'keyed'` on the current
-// dsh-client-ui-settings-plugins release, and pairs to its Host settings
-// namespace by the shared `key`. If dsh flips this slot back to `list` in a
-// later RC, the runtime error will name the missing option — flip
-// key/id together with the type file.
+// sidebar.footer.action, shell.overlay, and settings.plugins.tab are all
+// declared `kind: 'list'` by their owning packages (ui-sidebar, ui-layout,
+// and the Plugins settings section in ui-settings-plugins), so every
+// registration carries `id`. The settings tab seams to its Host settings
+// namespace through the inject face's settingsScope binding instead of a
+// slot option.
 const listExpected = [
   ['sidebar.footer.action', 'whaletv-workbench.sidebar'],
   ['shell.overlay', 'whaletv-workbench.panel'],
-]
-const keyedExpected = [
-  ['settings.plugin.item', 'whaletv-workbench'],
+  ['settings.plugins.tab', 'whaletv-workbench'],
 ]
 
 const injectKeys = [...injections].sort()
-const expectedSlots = [...listExpected, ...keyedExpected].map(([s]) => s).sort()
+const expectedSlots = listExpected.map(([s]) => s).sort()
 if (injectKeys.join(',') !== expectedSlots.join(',')) {
   throw new Error(`unexpected injections: got [${injectKeys.join(', ')}], want [${expectedSlots.join(', ')}]`)
 }
@@ -91,23 +88,17 @@ for (const [slotName, entryId] of listExpected) {
   if (hit.options.id !== entryId) throw new Error(`entry id for "${slotName}" is "${hit.options.id}", expected "${entryId}"`)
   if (typeof hit.options.inject !== 'function') throw new Error(`registration for "${slotName}" lacks the inject factory`)
 }
-for (const [slotName, entryKey] of keyedExpected) {
-  const hit = registrations.find(r => r.options.name === slotName)
-  if (hit === undefined) throw new Error(`no registration for declared keyed slot "${slotName}"`)
-  if (hit.options.key !== entryKey) throw new Error(`entry key for "${slotName}" is "${hit.options.key}", expected "${entryKey}"`)
-  if (typeof hit.options.inject !== 'function') throw new Error(`registration for "${slotName}" lacks the inject factory`)
-}
-// The two panel registrations share a store handle; the settings card
+// The two panel registrations share a store handle; the settings tab
 // registers no store (its data source is settingsScope, not the panel).
 const panelHandles = new Set(
   registrations
-    .filter(r => listExpected.some(([slot]) => slot === r.options.name))
+    .filter(r => ['sidebar.footer.action', 'shell.overlay'].includes(r.options.name))
     .map(r => r.options.store),
 )
 if (panelHandles.size !== 1) throw new Error(`expected one shared store handle for panel slots, got ${panelHandles.size}`)
 const cardHandles = registrations
-  .filter(r => keyedExpected.some(([slot]) => slot === r.options.name))
+  .filter(r => r.options.name === 'settings.plugins.tab')
   .map(r => r.options.store)
-if (cardHandles.some(h => h !== undefined)) throw new Error('settings.plugin.item registration should not carry a store')
+if (cardHandles.some(h => h !== undefined)) throw new Error('settings.plugins.tab registration should not carry a store')
 
-console.log(`smoke-apply: OK — list slots=[${listExpected.map(([s, id]) => `${s}(id=${id})`).join(', ')}], keyed slots=[${keyedExpected.map(([s, k]) => `${s}(key=${k})`).join(', ')}], shared store on panel slots, no store on the settings card`)
+console.log(`smoke-apply: OK — list slots=[${listExpected.map(([s, id]) => `${s}(id=${id})`).join(', ')}], shared store on panel slots, no store on the settings tab`)

@@ -1,0 +1,40 @@
+# Fast CI: install → version check → bundle → mock-based smoke.
+#
+# Deliberately NO harness types here: @deepseek-ai/* peers are resolved on
+# dev machines via scripts/link-harness-deps.mjs ($DSH_HOME fallback or a
+# sibling harness checkout), which a throwaway CI runner does not have.
+# tsc --noEmit against real dsh types runs in the weekly "dsh alignment"
+# workflow (.github/workflows/align.yml) instead.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Version consistency (package.json vs README/DESIGN)
+        run: pnpm run check:version
+
+      - name: Build (icon + dual-face bundle)
+        run: pnpm run bundle
+
+      - name: Smoke (client / apply / host contracts)
+        run: pnpm run smoke:ci

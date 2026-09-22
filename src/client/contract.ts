@@ -10,10 +10,12 @@ import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 // Type-only: pull the layout's SlotMap merge (shell.overlay).
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 import type {
-  WorkbenchConfig, WorkbenchConfigSaveResult, WorkbenchSessionFollowupResult,
+  WorkbenchConfig, WorkbenchConfigSaveResult, WorkbenchHealth, WorkbenchSessionFollowupResult,
   WorkbenchSkillImportRequest, WorkbenchSkillImportResult, WorkbenchSkillInstallRequest,
-  WorkbenchSkillInstallResult, WorkbenchSkillList, WorkbenchSkillRemoveResult, WorkbenchState,
-  WorkbenchUpdateResult,
+  WorkbenchSkillInstallResult, WorkbenchSkillList, WorkbenchSkillRemoveResult,
+  WorkbenchSkillSourceResult, WorkbenchSkillUpdateResult, WorkbenchState,
+  WorkbenchUpdateCheckResult, WorkbenchUpdateHistory, WorkbenchUpdateResult,
+  WorkbenchUpdateRollbackResult, WorkbenchUpdateSkipResult, WorkbenchUsage,
 } from '../shared.ts'
 import type { createWorkbenchStore } from './store.ts'
 
@@ -33,6 +35,23 @@ export type WorkbenchInjected = {
   saveConfig: (config: WorkbenchConfig) => Promise<WorkbenchConfigSaveResult>
   /** POST the one-click update; resolves the Host's structured result. */
   update: () => Promise<WorkbenchUpdateResult>
+  /**
+   * Fetch + ahead/behind + incoming commit list, without touching the
+   * working tree (roadmap P1-8). Surfaces the "检查更新" flow's data.
+   */
+  checkUpdate: () => Promise<WorkbenchUpdateCheckResult>
+  /** Read the rolling update-attempt log persisted by the Host (P1-9). */
+  loadUpdateHistory: () => Promise<WorkbenchUpdateHistory>
+  /** Mark the given upstream head as skipped; the checker stops nagging until the remote moves (P1-10). */
+  skipUpdate: (sha: string) => Promise<WorkbenchUpdateSkipResult>
+  /** Reset to the state before the last successful update and hot-inject (P1-9). */
+  rollbackUpdate: () => Promise<WorkbenchUpdateRollbackResult>
+  /** Read the launch-count ledger behind the 最近使用 rail (P2-12). */
+  loadUsage: () => Promise<WorkbenchUsage>
+  /** Bump one item's launch counter (fire-and-forget from the panel, P2-12). */
+  recordUsage: (itemId: string) => Promise<{ ok: boolean }>
+  /** Probe every configured entry's reachability (P2-16). */
+  checkHealth: () => Promise<WorkbenchHealth>
   /** Fetch the current skill catalog (ctx.skills.snapshot) projection. */
   loadSkills: () => Promise<WorkbenchSkillList>
   /** Install a workbench-owned skill from an inline markdown body. */
@@ -41,6 +60,10 @@ export type WorkbenchInjected = {
   importSkill: (request: WorkbenchSkillImportRequest) => Promise<WorkbenchSkillImportResult>
   /** Remove a workbench-owned skill by name. */
   removeSkill: (name: string) => Promise<WorkbenchSkillRemoveResult>
+  /** Re-clone a skill's recorded origin and apply a newer head (P3-21). */
+  updateSkill: (name: string) => Promise<WorkbenchSkillUpdateResult>
+  /** Read a workbench-managed skill's raw SKILL.md for the panel editor (P3-23). */
+  loadSkillSource: (name: string) => Promise<WorkbenchSkillSourceResult>
   /**
    * Queue an ordinary follow-up turn on a live agent (agent.followup).
    * Preferred over clipboard-copy + startSession when the caller knows the

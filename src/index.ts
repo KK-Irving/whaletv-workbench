@@ -8,6 +8,14 @@
  *   POST /config             → validate + persist workbench.json
  *   POST /update             → git pull --ff-only → (changed) pnpm install
  *                              → pnpm run bundle → ctx.clientModules.rebuilt
+ *   GET  /update/check       → fetch + ahead/behind + incoming commits
+ *   GET  /update/history     → rolling update-attempt log (updates.json)
+ *   POST /update/skip        → mark the upstream head as skipped
+ *   POST /update/rollback    → reset to the last update's before-SHA + rebuild
+ *   GET  /usage              → launch-count ledger (最近使用 rail)
+ *   POST /usage/record       → bump one item's launch counter
+ *   GET  /health             → reachability probe for every entry
+ *   GET  /icon?url=<origin>  → cached per-origin favicon proxy
  *   GET  /skills             → invocation-neutral summaries from ctx.skills
  *   POST /skills/install     → write a workbench-owned skill into
  *                              $DSH_HOME/skills/<name>/SKILL.md and record it
@@ -15,6 +23,8 @@
  *                              skill body (bundle or flat markdown) into
  *                              $DSH_HOME/skills/<name>/
  *   POST /skills/remove      → remove a workbench-owned skill's dir
+ *   GET  /skills/source      → raw SKILL.md body for the panel editor
+ *   POST /skills/update      → re-clone the recorded origin and apply changes
  *   POST /session/followup   → ctx.agents.get(sessionId).followup(message)
  *                              — the modern replacement for
  *                              clipboard-copy + startSession pairing.
@@ -27,6 +37,7 @@
  * @module whaletv-workbench
  */
 import { execFile } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import {
   cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync,
   statSync, writeFileSync,
@@ -55,11 +66,14 @@ import type { SessionId } from '@deepseek-ai/dsh-session'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import z from '@deepseek-ai/schemastery'
 import type {
-  WorkbenchConfig, WorkbenchGroup, WorkbenchItem, WorkbenchSessionFollowupRequest,
-  WorkbenchSessionFollowupResult, WorkbenchSkillImportRequest, WorkbenchSkillImportResult,
-  WorkbenchSkillInstallRequest, WorkbenchSkillInstallResult, WorkbenchSkillList,
-  WorkbenchSkillRemoveRequest, WorkbenchSkillRemoveResult, WorkbenchSkillSummary, WorkbenchState,
-  WorkbenchUpdateResult,
+  WorkbenchConfig, WorkbenchGroup, WorkbenchInstalledSkill, WorkbenchItem,
+  WorkbenchSessionFollowupRequest, WorkbenchSessionFollowupResult, WorkbenchSkillImportRequest,
+  WorkbenchSkillImportResult, WorkbenchSkillInstallRequest, WorkbenchSkillInstallResult,
+  WorkbenchSkillList, WorkbenchSkillRemoveRequest, WorkbenchSkillRemoveResult,
+  WorkbenchSkillSummary, WorkbenchSkillUpdateRequest, WorkbenchSkillUpdateResult,
+  WorkbenchState, WorkbenchUpdateCheckResult, WorkbenchUpdateHistory, WorkbenchUpdateHistoryEntry,
+  WorkbenchUpdateResult, WorkbenchUpdateRollbackResult, WorkbenchUpdateSkipRequest,
+  WorkbenchUpdateSkipResult,
 } from './shared.ts'
 
 export const name = 'whaletv-workbench'
@@ -77,12 +91,15 @@ export interface Config {
   customSkillDirs: string[]
   /** Kebab-case names of skills this workbench installed (and can safely remove). Managed by the install/remove routes. */
   installedSkills: string[]
+  /** Upstream head SHA the user chose to skip in the update checker; a later remote head re-arms the reminder. */
+  skippedHead: string
 }
 
 export const Config: z<Config> = z.object({
   gitRemote: z.string().default(''),
   customSkillDirs: z.array(z.string()).default([]),
   installedSkills: z.array(z.string()).default([]),
+  skippedHead: z.string().default(''),
 })
 
 /**
@@ -206,6 +223,39 @@ const WORKBENCH_CONFIG_PATH = join(WORKBENCH_STATE_DIR, 'workbench.json')
 const IMPORT_STAGING_DIR = join(WORKBENCH_STATE_DIR, '.staging')
 /** Legacy config location — read once for backward-compat, then migrated. */
 const LEGACY_CONFIG_PATH = join(PACKAGE_DIR, 'config', 'workbench.json')
+/** Rolling self-update history (roadmap P1-9): the last N update attempts. */
+const UPDATE_HISTORY_PATH = join(WORKBENCH_STATE_DIR, 'updates.json')
+const MAX_HISTORY_ENTRIES = 20
+/** How many incoming commits the update checker lists. */
+const MAX_CHECK_COMMITS = 20
+/** SHA accepted by the skip route: short (≥7) or full hex. */
+const SHA_PATTERN = /^[0-9a-f]{7,40}$/i
+
+/**
+ * Launch-usage ledger (roadmap P2-12): `{ [itemId]: { count, lastUsed } }`,
+ * feeding the panel's 最近使用 rail. Capped by lastUsed recency.
+ */
+const USAGE_PATH = join(WORKBENCH_STATE_DIR, 'usage.json')
+const MAX_USAGE_ENTRIES = 500
+/**
+ * Skill versioning records (roadmap P3-20): one line per workbench-installed
+ * skill with its Git origin / SHA / sub-path, enabling the per-skill
+ * "检查更新" (P3-21). Plain Host-owned JSON — not a settings field — so the
+ * settings schema stays flat and old user layers never need migrating.
+ */
+const INSTALLED_RECORDS_PATH = join(WORKBENCH_STATE_DIR, 'installed-skills.json')
+/** Per-probe timeout for the reachability checker (roadmap P2-16). */
+const HEALTH_TIMEOUT_MS = 5_000
+/** Favicon cache (roadmap P2-17): per-origin icons under the state dir. */
+const ICON_DIR = join(WORKBENCH_STATE_DIR, 'icons')
+const ICON_MAX_BYTES = 512 * 1024
+/**
+ * Hostnames the favicon proxy refuses: loopback / link-local / RFC1918
+ * literals and localhost. A local dashboard could otherwise be talked into
+ * fetching intranet URLs. DNS rebinding is out of scope for a 127.0.0.1
+ * tool (documented tradeoff, mirrors the git-import URL posture).
+ */
+const PRIVATE_HOST_PATTERN = /^(localhost|127\.|0\.|10\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.|\[::1\]$|\[fc|\[fd|\[fe80)/i
 
 /**
  * Resolve spawn options for this platform: npm/pnpm are .cmd shims on
@@ -454,10 +504,29 @@ function sendJson(res: ServerResponse, status: number, body: unknown): void {
 }
 
 /**
- * Run the self-update pipeline. Never throws: every failure returns an
- * actionable { ok: false, error } result.
+ * Run the self-update pipeline and record the attempt into the rolling
+ * history (roadmap P1-9). Never throws: every failure returns an
+ * actionable { ok: false, error } result. History writes are best-effort —
+ * a broken updates.json must never turn a good update into a panel error.
  */
 async function runUpdate(ctx: Context): Promise<WorkbenchUpdateResult> {
+  const startedAt = new Date()
+  const result = await runUpdatePipeline(ctx)
+  appendUpdateHistory({
+    time: startedAt.toISOString(),
+    ok: result.ok,
+    ...(result.changed !== undefined ? { changed: result.changed } : {}),
+    ...(result.rebuilt !== undefined ? { rebuilt: result.rebuilt } : {}),
+    ...(result.needRestart !== undefined ? { needRestart: result.needRestart } : {}),
+    ...(result.before !== undefined ? { before: result.before } : {}),
+    ...(result.after !== undefined ? { after: result.after } : {}),
+    ...(result.ok ? {} : { error: result.error }),
+  })
+  return result
+}
+
+/** The git → install → bundle → hot-inject pipeline proper (no history side effects). */
+async function runUpdatePipeline(ctx: Context): Promise<WorkbenchUpdateResult> {
   const before = await git(['rev-parse', 'HEAD'])
   if (before === undefined) {
     return { ok: false, error: '插件目录不是 git 仓库（git rev-parse 失败）。请先在本目录 git init 并关联远程仓库，或直接编辑源码后手动运行 pnpm run bundle。' }
@@ -485,6 +554,16 @@ async function runUpdate(ctx: Context): Promise<WorkbenchUpdateResult> {
       changed ? `\n$ pnpm install\n${installOutput}` : '',
       changed ? `\n$ pnpm run bundle\n${bundleOutput}` : '',
     ].filter(part => part !== '').join('\n')
+    // needRestart only matters when the HOST bundle's inputs moved:
+    // lib/index.js is built from src/index.ts, while tsdown.config.ts and
+    // package.json can change how every face builds (externals, deps,
+    // prepare scripts). A client-only diff hot-injects without a restart,
+    // so asking for one every pull was noise. Unknown diff → ask (safe).
+    let serverChanged = true
+    if (changed && before !== undefined && after !== undefined) {
+      const touched = await git(['diff', '--name-only', before, after, '--', 'src/index.ts', 'tsdown.config.ts', 'package.json'])
+      serverChanged = touched === undefined || touched.trim() !== ''
+    }
     return {
       ok: true,
       changed,
@@ -492,10 +571,375 @@ async function runUpdate(ctx: Context): Promise<WorkbenchUpdateResult> {
       ...(before !== undefined ? { before } : {}),
       ...(after !== undefined ? { after } : {}),
       output: truncate(output),
-      needRestart: changed,
+      needRestart: changed && serverChanged,
     }
   } catch (error) {
     return { ok: false, error: truncate(String(error instanceof Error ? error.message : error)) }
+  }
+}
+
+/**
+ * Update checker (roadmap P1-8): fetch the origin remote and compare HEAD
+ * against its upstream — ahead/behind counts plus the newest incoming commit
+ * subjects — without touching the working tree. `skippedHead` is the user's
+ * skip marker; when the remote head equals it the result is flagged so the
+ * panel can show "skipped" instead of nagging. Never throws.
+ */
+async function runUpdateCheck(skippedHead: string): Promise<WorkbenchUpdateCheckResult> {
+  const branch = await git(['rev-parse', '--abbrev-ref', 'HEAD'])
+  if (branch === undefined) {
+    return { ok: false, upToDate: false, error: '插件目录不是 git 仓库，无法检查更新。请先关联远程仓库。' }
+  }
+  let upstream = branch === 'HEAD'
+    ? undefined
+    : await git(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'])
+  if (upstream === undefined || upstream.trim() === '') upstream = `origin/${branch}`
+  // A fetch failure (offline, auth, bad remote) surfaces as a readable error
+  // rather than a stale "already up to date" — the check is only honest when
+  // the remote refs are fresh.
+  try {
+    await run('git', ['fetch', '--quiet', upstream.includes('/') ? upstream.slice(0, upstream.indexOf('/')) : 'origin'])
+  } catch (error) {
+    return {
+      ok: false, upToDate: false, branch, upstream,
+      error: truncate(`git fetch 失败：${String(error instanceof Error ? error.message : error)}`),
+    }
+  }
+  const behindOut = await git(['rev-list', '--count', `HEAD..${upstream}`])
+  const aheadOut = await git(['rev-list', '--count', `${upstream}..HEAD`])
+  const behind = behindOut === undefined ? undefined : Number.parseInt(behindOut.trim(), 10)
+  const ahead = aheadOut === undefined ? undefined : Number.parseInt(aheadOut.trim(), 10)
+  if (behind === undefined || Number.isNaN(behind) || ahead === undefined || Number.isNaN(ahead)) {
+    return {
+      ok: false, upToDate: false, branch, upstream,
+      error: '无法比较本地与远端（git rev-list 失败）——请确认分支 upstream 有效。',
+    }
+  }
+  const commits: Array<{ sha: string; subject: string }> = []
+  if (behind > 0) {
+    const logOutput = await git(['log', '--oneline', '--no-decorate', `-${Math.min(behind, MAX_CHECK_COMMITS)}`, `HEAD..${upstream}`])
+    for (const line of (logOutput ?? '').split('\n')) {
+      const trimmed = line.trim()
+      if (trimmed === '') continue
+      const split = trimmed.indexOf(' ')
+      commits.push(split > 0
+        ? { sha: trimmed.slice(0, split), subject: trimmed.slice(split + 1) }
+        : { sha: trimmed, subject: trimmed })
+    }
+  }
+  const remoteHead = behind > 0 ? (await git(['rev-parse', '--short', upstream]))?.trim() : undefined
+  const marker = skippedHead.trim()
+  return {
+    ok: true,
+    branch,
+    upstream,
+    upToDate: behind === 0,
+    behind,
+    ahead,
+    ...(remoteHead !== undefined && remoteHead !== '' ? { remoteHead } : {}),
+    ...(commits.length > 0 ? { commits } : {}),
+    ...(marker !== '' && remoteHead !== undefined && remoteHead !== '' && remoteHead === marker ? { skipped: true } : {}),
+  }
+}
+
+/** Read the rolling update history; a missing/corrupt file is simply empty. */
+function readUpdateHistory(): WorkbenchUpdateHistoryEntry[] {
+  try {
+    const parsed = JSON.parse(readFileSync(UPDATE_HISTORY_PATH, 'utf8')) as { entries?: unknown }
+    if (parsed === null || typeof parsed !== 'object' || !Array.isArray(parsed.entries)) return []
+    return parsed.entries.filter((entry): entry is WorkbenchUpdateHistoryEntry => {
+      return entry !== null && typeof entry === 'object'
+        && typeof (entry as WorkbenchUpdateHistoryEntry).time === 'string'
+        && typeof (entry as WorkbenchUpdateHistoryEntry).ok === 'boolean'
+    })
+  } catch {
+    return []
+  }
+}
+
+/** Append one attempt to the rolling history (newest first), capped, atomic. */
+function appendUpdateHistory(entry: WorkbenchUpdateHistoryEntry): void {
+  try {
+    const entries = [entry, ...readUpdateHistory()].slice(0, MAX_HISTORY_ENTRIES)
+    mkdirSync(WORKBENCH_STATE_DIR, { recursive: true })
+    const tmp = `${UPDATE_HISTORY_PATH}.${process.pid}.${Date.now()}.tmp`
+    writeFileSync(tmp, `${JSON.stringify({ entries }, null, 2)}\n`, 'utf8')
+    renameSync(tmp, UPDATE_HISTORY_PATH)
+  } catch {
+    // Best-effort: history loss is acceptable, update failures are not.
+  }
+}
+
+/** Read the skill versioning records (roadmap P3-20); missing file is empty. */
+function readInstalledRecords(): WorkbenchInstalledSkill[] {
+  try {
+    const parsed = JSON.parse(readFileSync(INSTALLED_RECORDS_PATH, 'utf8')) as unknown
+    if (parsed === null || typeof parsed !== 'object' || !Array.isArray((parsed as { skills?: unknown }).skills)) {
+      return []
+    }
+    return ((parsed as { skills: unknown[] }).skills).filter((entry): entry is WorkbenchInstalledSkill => {
+      const record = entry as WorkbenchInstalledSkill
+      return entry !== null && typeof entry === 'object'
+        && typeof record.name === 'string' && record.name !== ''
+        && typeof record.installedAt === 'string'
+    })
+  } catch {
+    return []
+  }
+}
+
+/** Merge new/updated records by name and persist atomically (roadmap P3-20). */
+function upsertInstalledRecords(incoming: WorkbenchInstalledSkill[]): void {
+  if (incoming.length === 0) return
+  const byName = new Map(readInstalledRecords().map(record => [record.name, record]))
+  for (const record of incoming) byName.set(record.name, record)
+  const merged = [...byName.values()].sort((a, b) => a.name.localeCompare(b.name))
+  try {
+    mkdirSync(WORKBENCH_STATE_DIR, { recursive: true })
+    const tmp = `${INSTALLED_RECORDS_PATH}.${process.pid}.${Date.now()}.tmp`
+    writeFileSync(tmp, `${JSON.stringify({ skills: merged }, null, 2)}\n`, 'utf8')
+    renameSync(tmp, INSTALLED_RECORDS_PATH)
+  } catch {
+    // Best-effort: losing versioning metadata must not fail the install.
+  }
+}
+
+/** Drop records whose names are gone (post-remove), atomic, best-effort. */
+function pruneInstalledRecords(names: readonly string[]): void {
+  if (names.length === 0) return
+  const drop = new Set(names)
+  const remaining = readInstalledRecords().filter(record => !drop.has(record.name))
+  try {
+    mkdirSync(WORKBENCH_STATE_DIR, { recursive: true })
+    const tmp = `${INSTALLED_RECORDS_PATH}.${process.pid}.${Date.now()}.tmp`
+    writeFileSync(tmp, `${JSON.stringify({ skills: remaining }, null, 2)}\n`, 'utf8')
+    renameSync(tmp, INSTALLED_RECORDS_PATH)
+  } catch {
+    // Best-effort.
+  }
+}
+
+/**
+ * Roll the working tree back to the state before the last successful update
+ * (roadmap P1-9): reset --hard to that entry's `before` SHA, rebuild the
+ * bundle, and hot-inject. Refuses a dirty worktree — a reset would destroy
+ * local edits. Never throws.
+ */
+async function runUpdateRollback(ctx: Context): Promise<WorkbenchUpdateRollbackResult> {
+  const lastOk = readUpdateHistory().find(entry => entry.ok === true && entry.changed === true && typeof entry.before === 'string')
+  if (lastOk === undefined) {
+    return { ok: false, error: '没有可回滚的成功更新记录（updates.json 为空或全部失败）。' }
+  }
+  const dirty = await git(['status', '--porcelain'])
+  if (dirty !== undefined && dirty.trim() !== '') {
+    return { ok: false, error: '工作区有未提交的本地修改，回滚会丢弃它们；请先 commit / stash 再试。' }
+  }
+  const target = lastOk.before as string
+  try {
+    const resetOutput = await run('git', ['reset', '--hard', target])
+    const bundleOutput = await run('pnpm', ['run', 'bundle'])
+    ctx.clientModules.rebuilt(CLIENT_ID)
+    appendUpdateHistory({
+      time: new Date().toISOString(),
+      ok: true,
+      changed: true,
+      rebuilt: true,
+      needRestart: true,
+      after: target,
+    })
+    return {
+      ok: true,
+      revertedTo: target,
+      output: truncate(`$ git reset --hard ${target}\n${resetOutput}\n$ pnpm run bundle\n${bundleOutput}`),
+      needRestart: true,
+    }
+  } catch (error) {
+    const message = truncate(String(error instanceof Error ? error.message : error))
+    appendUpdateHistory({ time: new Date().toISOString(), ok: false, error: `rollback: ${message}` })
+    return { ok: false, error: message }
+  }
+}
+
+/**
+ * Clear the skip marker after a successful update moved to a new head — the
+ * reminder re-arms for whatever comes next. Best-effort; never throws.
+ */
+async function clearSkippedHead(ctx: Context): Promise<void> {
+  try {
+    const settings = ctx.get('settings')
+    if (settings) await settings.update(WORKBENCH_NAMESPACE, { skippedHead: '' })
+  } catch (settingsError) {
+    ctx.logger?.warn?.(`whaletv-workbench: skippedHead reset skipped: ${settingsError}`)
+  }
+}
+
+interface UsageRecord {
+  count: number
+  lastUsed: string
+}
+
+/** Read the usage ledger; a missing/corrupt file is simply empty. */
+function readUsage(): Record<string, UsageRecord> {
+  try {
+    const parsed = JSON.parse(readFileSync(USAGE_PATH, 'utf8')) as unknown
+    if (parsed === null || typeof parsed !== 'object') return {}
+    const usage: Record<string, UsageRecord> = {}
+    for (const [id, value] of Object.entries(parsed as Record<string, unknown>)) {
+      const record = value as UsageRecord
+      if (typeof record?.count === 'number' && typeof record?.lastUsed === 'string') {
+        usage[id] = { count: record.count, lastUsed: record.lastUsed }
+      }
+    }
+    return usage
+  } catch {
+    return {}
+  }
+}
+
+/** Increment one item's launch counter, pruning the ledger to the most recent ids. */
+function recordUsage(itemId: string): void {
+  if (itemId === '' || itemId.length > 128) return
+  try {
+    const usage = readUsage()
+    const previous = usage[itemId]
+    usage[itemId] = {
+      count: (previous?.count ?? 0) + 1,
+      lastUsed: new Date().toISOString(),
+    }
+    const capped = Object.entries(usage)
+      .sort(([, a], [, b]) => (a.lastUsed < b.lastUsed ? 1 : -1))
+      .slice(0, MAX_USAGE_ENTRIES)
+    mkdirSync(WORKBENCH_STATE_DIR, { recursive: true })
+    const tmp = `${USAGE_PATH}.${process.pid}.${Date.now()}.tmp`
+    writeFileSync(tmp, `${JSON.stringify(Object.fromEntries(capped), null, 2)}\n`, 'utf8')
+    renameSync(tmp, USAGE_PATH)
+  } catch {
+    // Best-effort telemetry for a UI rail — never fail the launch itself.
+  }
+}
+
+/**
+ * One entry's reachability probe (roadmap P2-16): HEAD with a GET fallback
+ * for sites that reject HEAD (403/405), path existence for local targets.
+ */
+async function checkEntryHealth(item: WorkbenchItem): Promise<{ ok: boolean; detail?: string }> {
+  if (item.url !== undefined && item.url !== '') {
+    const probe = async (method: 'HEAD' | 'GET'): Promise<{ ok: boolean; detail: string }> => {
+      const controller = new AbortController()
+      const timer = setTimeout(() => controller.abort(), HEALTH_TIMEOUT_MS)
+      try {
+        const response = await fetch(item.url!, { method, redirect: 'follow', signal: controller.signal })
+        return { ok: response.status < 400, detail: `HTTP ${response.status}` }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        return { ok: false, detail: message === 'This operation was aborted' ? `超时（>${HEALTH_TIMEOUT_MS / 1000}s）` : message }
+      } finally {
+        clearTimeout(timer)
+      }
+    }
+    const head = await probe('HEAD')
+    if (head.ok || head.detail === 'HTTP 404') return head
+    // 403/405 HEAD rejections are common (bot shields, framework routing) —
+    // retry once with GET before declaring the entry down.
+    return probe('GET')
+  }
+  if (item.path !== undefined && item.path !== '') {
+    return existsSync(item.path) ? { ok: true, detail: '路径存在' } : { ok: false, detail: '路径不存在' }
+  }
+  return { ok: false, detail: '未配置目标' }
+}
+
+/** Probe every entry in the config (roadmap P2-16), keyed by item id. */
+async function runHealthCheck(config: WorkbenchConfig): Promise<Record<string, { ok: boolean; detail?: string }>> {
+  const results: Record<string, { ok: boolean; detail?: string }> = {}
+  for (const group of config.groups) {
+    for (const item of group.items) {
+      results[item.id] = await checkEntryHealth(item)
+    }
+  }
+  return results
+}
+
+/**
+ * Whether a favicon origin may be fetched: http(s) only, non-private host.
+ * @returns an error reason, or undefined when allowed.
+ */
+function faviconOriginError(origin: string): string | undefined {
+  let parsed: URL
+  try {
+    parsed = new URL(origin)
+  } catch {
+    return 'URL 无法解析'
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return '仅支持 http(s)'
+  if (parsed.pathname !== '/' && parsed.pathname !== '') return '只接受 origin（协议+主机），忽略路径'
+  if (PRIVATE_HOST_PATTERN.test(parsed.hostname)) return '拒绝内网 / 环回地址'
+  return undefined
+}
+
+/** Per-origin cache filename for the favicon proxy. */
+function faviconFile(origin: string): string {
+  const hash = createHash('sha1').update(origin).digest('hex').slice(0, 16)
+  return join(ICON_DIR, `${hash}.ico`)
+}
+
+const FAVICON_MIME_BY_EXT: Record<string, string> = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp',
+  '.gif': 'image/gif',
+  '.svg': 'image/svg+xml',
+  '.ico': 'image/x-icon',
+}
+
+/**
+ * Serve a cached favicon for the given origin (roadmap P2-17), downloading
+ * `<origin>/favicon.ico` on first use. Cache-forever per origin (the file is
+ * content-addressed by origin); 404 when uncached and unfetchable — the
+ * panel hides the img on error.
+ */
+async function serveFavicon(url: string): Promise<{ status: number; contentType: string; body: Buffer; cache: string }> {
+  const originError = faviconOriginError(url)
+  if (originError !== undefined) {
+    return { status: 400, contentType: 'text/plain; charset=utf-8', body: Buffer.from(originError), cache: 'no-store' }
+  }
+  mkdirSync(ICON_DIR, { recursive: true })
+  const cached = faviconFile(url)
+  if (existsSync(cached)) {
+    const ext = cached.slice(cached.lastIndexOf('.'))
+    return {
+      status: 200,
+      contentType: FAVICON_MIME_BY_EXT[ext] ?? 'application/octet-stream',
+      body: readFileSync(cached),
+      cache: 'public, max-age=604800',
+    }
+  }
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), HEALTH_TIMEOUT_MS)
+  try {
+    const response = await fetch(new URL('/favicon.ico', url), { signal: controller.signal, redirect: 'follow' })
+    if (!response.ok) {
+      return { status: 404, contentType: 'text/plain; charset=utf-8', body: Buffer.from('favicon 不可用'), cache: 'no-store' }
+    }
+    const contentType = (response.headers.get('content-type') ?? '').split(';')[0]?.trim() ?? ''
+    const ext = Object.entries(FAVICON_MIME_BY_EXT).find(([, mime]) => mime === contentType)?.[0] ?? '.ico'
+    const buffer = Buffer.from(await response.arrayBuffer())
+    if (buffer.length === 0 || buffer.length > ICON_MAX_BYTES) {
+      return { status: 404, contentType: 'text/plain; charset=utf-8', body: Buffer.from('favicon 尺寸异常'), cache: 'no-store' }
+    }
+    const target = cached.slice(0, cached.lastIndexOf('.')) + ext
+    writeFileSync(target, buffer)
+    return { status: 200, contentType: contentType !== '' ? contentType : 'image/x-icon', body: buffer, cache: 'public, max-age=604800' }
+  } catch (error) {
+    return {
+      status: 404,
+      contentType: 'text/plain; charset=utf-8',
+      body: Buffer.from(`favicon 抓取失败：${error instanceof Error ? error.message : String(error)}`),
+      cache: 'no-store',
+    }
+  } finally {
+    clearTimeout(timer)
   }
 }
 
@@ -567,10 +1011,13 @@ async function buildSkillDebug(ctx: Context): Promise<Record<string, unknown>> {
  * $DSH_HOME/skills — those the install route wrote or the user placed by
  * hand under our root. Skills from project/agent/bundled sources are read-only.
  */
-async function buildSkillList(ctx: Context, installed: readonly string[]): Promise<WorkbenchSkillList> {
+async function buildSkillList(
+  ctx: Context, installed: readonly string[], records: readonly WorkbenchInstalledSkill[],
+): Promise<WorkbenchSkillList> {
   try {
     const snap = await ctx.skills.snapshot({})
     const installedSet = new Set(installed)
+    const recordByName = new Map(records.map(record => [record.name, record]))
     const skills: WorkbenchSkillSummary[] = snap.skills.map(s => ({
       name: s.name,
       description: s.description,
@@ -580,6 +1027,7 @@ async function buildSkillList(ctx: Context, installed: readonly string[]): Promi
       // Removable only when this workbench wrote it OR it landed under our
       // user-dsh root (safe to delete without touching project/agent roots).
       removable: installedSet.has(s.name) || findManagedSkillPath(s.name) !== undefined,
+      ...(recordByName.has(s.name) ? { origin: recordByName.get(s.name) } : {}),
     }))
     return { ok: true, skills, complete: snap.complete }
   } catch (error) {
@@ -619,11 +1067,12 @@ function installSkillOnDisk(name: string, content: string): string {
  *   - URL is restricted to http(s) / ssh — no `file://` or local paths.
  *   - `--` before the URL and dest prevents git from interpreting them as flags.
  *   - Ref is checked against `GIT_REF_PATTERN` — no `--upload-pack=` injection.
- *   - `sourceRoot` is verified to stay inside the staging tree so a
+ *   - Resolved source path is verified to stay inside the staging tree so a
  *     malicious sub-path can't escape via `../..`.
  *   - Staging clone is removed on both success and failure.
  *
- * @returns [installed path, captured git output]
+ * @returns installed names, per-skill source sub-paths (versioning records,
+ *   roadmap P3-20), source head SHA, and captured git output
  */
 async function importSkillFromGit(
   request: WorkbenchSkillImportRequest,
@@ -631,6 +1080,8 @@ async function importSkillFromGit(
   installed: string[]
   skipped?: Array<{ name: string; reason: string }>
   writtenTo?: string
+  sha?: string
+  sources?: Array<{ name: string; subPath: string }>
   output: string
 }> {
   const targetName = request.name?.trim() ?? ''
@@ -679,17 +1130,26 @@ async function importSkillFromGit(
       throw new Error(translateGitError(url, raw))
     }
 
-    // Resolve where the SKILL lives inside the freshly cloned tree.
-    const rawSource = subPath === '' ? staging : join(staging, subPath)
-    // Path-traversal guard: node's join collapses `..`, so we verify the
-    // resolved absolute path is still under staging before touching anything.
-    const source = statSync(rawSource, { throwIfNoEntry: false }) !== undefined ? rawSource : rawSource
+    // Resolve where the SKILL lives inside the freshly cloned tree. Node's
+    // join collapses `..`, so verify the resolved absolute path is still
+    // under the staging tree before touching anything (path-traversal guard).
+    const source = subPath === '' ? staging : join(staging, subPath)
     if (!source.startsWith(staging)) {
       throw new Error(`子路径解析出的目录越权：${source}`)
     }
     if (!existsSync(source)) {
       throw new Error(`仓库里未找到子路径：${subPath === '' ? '<repo 根目录>' : subPath}`)
     }
+    // Versioning (roadmap P3-20): capture the source head so the per-skill
+    // "检查更新" can tell later installs apart from this exact commit.
+    let sha: string | undefined
+    try {
+      sha = (await run('git', ['rev-parse', '--short', 'HEAD'], staging)).trim()
+    } catch { /* versioning is best-effort; the install proceeds regardless */ }
+    // Repo-relative source location per installed name — the versioning
+    // record re-uses it to re-clone just that subtree on update.
+    const sourcesFor = (names: readonly string[]): Array<{ name: string; subPath: string }> =>
+      names.map(name => ({ name, subPath: subPath === '' ? '' : `${subPath.replace(/\/+$/, '')}/${name}` }))
 
     mkdirSync(USER_DSH_SKILLS_DIR, { recursive: true })
     const stat = statSync(source)
@@ -700,14 +1160,26 @@ async function importSkillFromGit(
       // when the user pointed subPath at a `SKILL.md` file directly.
       const dest = join(USER_DSH_SKILLS_DIR, targetName)
       installBundleDir(resolved.dir, dest, staging)
-      return { installed: [targetName], writtenTo: join(dest, 'SKILL.md'), output: gitOutput }
+      return {
+        installed: [targetName],
+        writtenTo: join(dest, 'SKILL.md'),
+        ...(sha !== undefined ? { sha } : {}),
+        sources: [{ name: targetName, subPath }],
+        output: gitOutput,
+      }
     }
     if (resolved.kind === 'flat') {
       // Flat form — one Markdown file becomes `<name>.md` under the root.
       const dest = join(USER_DSH_SKILLS_DIR, `${targetName}.md`)
       if (existsSync(dest)) rmSync(dest, { force: true })
       cpSync(resolved.file, dest)
-      return { installed: [targetName], writtenTo: dest, output: gitOutput }
+      return {
+        installed: [targetName],
+        writtenTo: dest,
+        ...(sha !== undefined ? { sha } : {}),
+        sources: [{ name: targetName, subPath }],
+        output: gitOutput,
+      }
     }
     if (resolved.kind === 'batch') {
       // Batch — one repo containing multiple `<child>/SKILL.md` bundles;
@@ -746,6 +1218,8 @@ async function importSkillFromGit(
         // For single-batch-result the writtenTo shows the parent dir; the
         // frontend uses `installed` primarily for display.
         writtenTo: USER_DSH_SKILLS_DIR,
+        ...(sha !== undefined ? { sha } : {}),
+        sources: sourcesFor(installed),
         output: gitOutput,
       }
     }
@@ -1019,6 +1493,28 @@ function removeSkillOnDisk(name: string): void {
 }
 
 /**
+ * Serve the raw SKILL.md / *.md body of a workbench-managed skill for the
+ * panel editor (roadmap P3-23). Only skills that resolve under
+ * `$DSH_HOME/skills` are readable — project/agent/bundled skills stay
+ * opaque. Saving goes back through the normal install route, which
+ * overwrites in place and preserves the versioning record.
+ */
+function readSkillSource(name: string): { ok: boolean; name?: string; path?: string; content?: string; error?: string } {
+  if (!SKILL_NAME_PATTERN.test(name)) {
+    return { ok: false, error: `skill 名称必须为 kebab-case，收到：${name}` }
+  }
+  const path = findManagedSkillPath(name)
+  if (path === undefined) {
+    return { ok: false, error: `未找到工作台管理的技能源文件：${name}（只能编辑 $DSH_HOME/skills 下的技能）` }
+  }
+  try {
+    return { ok: true, name, path, content: readFileSync(path, 'utf8') }
+  } catch (error) {
+    return { ok: false, error: `读取失败：${error instanceof Error ? error.message : String(error)}` }
+  }
+}
+
+/**
  * Route a follow-up prompt into an existing live agent's inbox.
  *
  * Prefers the client-supplied sessionId; falls back to
@@ -1157,16 +1653,143 @@ export function apply(ctx: Context, config: Config): void {
           }
           updating = true
           void runUpdate(ctx).then(
+            result => {
+              // A successful move invalidates any "skip this version" marker.
+              if (result.ok && result.changed === true) void clearSkippedHead(ctx)
+              sendJson(res, result.ok ? 200 : 500, result)
+            },
+            (error: unknown) => { sendJson(res, 500, { ok: false, error: String(error) }) },
+          ).finally(() => { updating = false })
+          return
+        }
+
+        // GET /update/check — fetch + ahead/behind + incoming commit list,
+        // no working-tree changes (roadmap P1-8).
+        if (sub === '/update/check' && (method === undefined || method === 'GET' || method === 'HEAD')) {
+          void runUpdateCheck(source().skippedHead).then(
+            result => { sendJson(res, result.ok ? 200 : 500, result) },
+            (error: unknown) => { sendJson(res, 500, { ok: false, upToDate: false, error: String(error) }) },
+          )
+          return
+        }
+
+        // GET /update/history — the rolling attempt log (roadmap P1-9).
+        if (sub === '/update/history' && (method === undefined || method === 'GET' || method === 'HEAD')) {
+          sendJson(res, 200, { ok: true, entries: readUpdateHistory() } satisfies WorkbenchUpdateHistory)
+          return
+        }
+
+        // POST /update/skip — mark the upstream head as skipped; the checker
+        // flags it instead of nagging until the remote moves again (P1-10).
+        if (sub === '/update/skip') {
+          if (method !== 'POST') {
+            sendJson(res, 405, { ok: false, error: '仅支持 POST 请求' })
+            return
+          }
+          void readJsonBody(req, 4 * 1024).then(
+            async (raw) => {
+              try {
+                const request = raw as WorkbenchUpdateSkipRequest
+                const sha = typeof request.sha === 'string' ? request.sha.trim() : ''
+                if (!SHA_PATTERN.test(sha)) throw new Error(`sha 必须是 7-40 位十六进制，收到：${sha || '<空>'}`)
+                const settings = ctx.get('settings')
+                if (settings) await settings.update(WORKBENCH_NAMESPACE, { skippedHead: sha.toLowerCase() })
+                const result: WorkbenchUpdateSkipResult = { ok: true, skippedHead: sha.toLowerCase() }
+                sendJson(res, 200, result)
+              } catch (error) {
+                const result: WorkbenchUpdateSkipResult = { ok: false, error: error instanceof Error ? error.message : String(error) }
+                sendJson(res, 400, result)
+              }
+            },
+            (error: unknown) => {
+              sendJson(res, 400, { ok: false, error: error instanceof Error ? error.message : String(error) })
+            },
+          )
+          return
+        }
+
+        // POST /update/rollback — reset to before the last successful update
+        // and hot-inject the reverted bundle (roadmap P1-9).
+        if (sub === '/update/rollback') {
+          if (method !== 'POST') {
+            sendJson(res, 405, { ok: false, error: '仅支持 POST 请求' })
+            return
+          }
+          if (updating) {
+            sendJson(res, 409, { ok: false, error: '已有更新或回滚正在进行中，请稍候。' })
+            return
+          }
+          updating = true
+          void runUpdateRollback(ctx).then(
             result => { sendJson(res, result.ok ? 200 : 500, result) },
             (error: unknown) => { sendJson(res, 500, { ok: false, error: String(error) }) },
           ).finally(() => { updating = false })
           return
         }
 
+        // GET /usage — launch-count ledger feeding the 最近使用 rail (P2-12).
+        if (sub === '/usage' && (method === undefined || method === 'GET' || method === 'HEAD')) {
+          sendJson(res, 200, { ok: true, usage: readUsage() })
+          return
+        }
+
+        // POST /usage/record — bump one item's counter at launch time (P2-12).
+        if (sub === '/usage/record') {
+          if (method !== 'POST') {
+            sendJson(res, 405, { ok: false, error: '仅支持 POST 请求' })
+            return
+          }
+          void readJsonBody(req, 4 * 1024).then(
+            (raw) => {
+              try {
+                const itemId = typeof (raw as { itemId?: unknown }).itemId === 'string' ? (raw as { itemId: string }).itemId.trim() : ''
+                if (itemId === '') throw new Error('itemId 不能为空')
+                recordUsage(itemId)
+                sendJson(res, 200, { ok: true })
+              } catch (error) {
+                sendJson(res, 400, { ok: false, error: error instanceof Error ? error.message : String(error) })
+              }
+            },
+            (error: unknown) => {
+              sendJson(res, 400, { ok: false, error: error instanceof Error ? error.message : String(error) })
+            },
+          )
+          return
+        }
+
+        // GET /health — probe every configured entry once (P2-16): url HEAD
+        // (GET fallback for 403/405 shields) and path existence.
+        if (sub === '/health' && (method === undefined || method === 'GET' || method === 'HEAD')) {
+          void runHealthCheck(readConfig()).then(
+            results => { sendJson(res, 200, { ok: true, results }) },
+            (error: unknown) => { sendJson(res, 500, { ok: false, error: String(error) }) },
+          )
+          return
+        }
+
+        // GET /icon?url=<origin> — cached per-origin favicon proxy (P2-17).
+        // Private-network origins are refused; responses are immutable files
+        // under the workbench state dir.
+        if (sub === '/icon' && (method === undefined || method === 'GET' || method === 'HEAD')) {
+          const target = new URL(req.url ?? '/', 'http://localhost').searchParams.get('url') ?? ''
+          void serveFavicon(target).then(
+            icon => {
+              res.writeHead(icon.status, {
+                'Content-Type': icon.contentType,
+                'Content-Length': icon.body.length,
+                'Cache-Control': icon.cache,
+              })
+              res.end(method === 'HEAD' ? undefined : icon.body)
+            },
+            (error: unknown) => { sendJson(res, 500, { ok: false, error: String(error) }) },
+          )
+          return
+        }
+
         // GET /skills — invocation-neutral catalog + which entries this
         // workbench can remove.
         if (sub === '/skills' && (method === undefined || method === 'GET' || method === 'HEAD')) {
-          void buildSkillList(ctx, source().installedSkills).then(
+          void buildSkillList(ctx, source().installedSkills, readInstalledRecords()).then(
             payload => { sendJson(res, payload.ok ? 200 : 500, payload) },
             (error: unknown) => { sendJson(res, 500, { ok: false, skills: [], complete: false, error: String(error) }) },
           )
@@ -1185,6 +1808,14 @@ export function apply(ctx: Context, config: Config): void {
           return
         }
 
+        // GET /skills/source?name=<name> — raw SKILL.md body for the panel
+        // editor (roadmap P3-23); only $DSH_HOME/skills skills are readable.
+        if (sub === '/skills/source' && (method === undefined || method === 'GET' || method === 'HEAD')) {
+          const name = new URL(req.url ?? '/', 'http://localhost').searchParams.get('name') ?? ''
+          sendJson(res, 200, readSkillSource(name))
+          return
+        }
+
         // POST /skills/install — write a skill file + register its name.
         if (sub === '/skills/install') {
           if (method !== 'POST') {
@@ -1200,10 +1831,16 @@ export function apply(ctx: Context, config: Config): void {
                 if (skillName === undefined) throw new Error('skill 名称不能为空')
                 if (content.trim() === '') throw new Error('skill 内容不能为空')
                 const writtenTo = installSkillOnDisk(skillName, content)
-                // Our own SkillProvider caches nothing, but the registry
-                // caches list() results — invalidate so the next snapshot
-                // rescans disk right away (deterministic, doesn't wait on
-                // chokidar).
+                // Versioning record (roadmap P3-20): an install onto an
+                // existing skill (panel edit overwrite) must PRESERVE the
+                // previous origin fields (sourceUrl/sha/subPath/ref) — only
+                // the timestamp refreshes. A brand-new skill gets a bare
+                // record; the import route fills origins itself.
+                const previousRecord = readInstalledRecords().find(entry => entry.name === skillName)
+                upsertInstalledRecords([{
+                  ...(previousRecord ?? { name: skillName }),
+                  installedAt: new Date().toISOString(),
+                }])
                 skillProvider.invalidate()
                 // Reflect ownership in the settings namespace so a later
                 // `/skills` read marks this skill as removable across restarts.
@@ -1253,15 +1890,28 @@ export function apply(ctx: Context, config: Config): void {
                 if (typeof request.name !== 'string') throw new Error('name 必须是字符串')
                 const outcome = await importSkillFromGit(request)
                 skillProvider.invalidate()
+                // Versioning records (roadmap P3-20): one entry per installed
+                // skill with its exact source sub-path + head SHA, so the
+                // per-skill "检查更新" can re-clone just that subtree.
+                const installedAt = new Date().toISOString()
+                const sourceByName = new Map((outcome.sources ?? []).map(entry => [entry.name, entry.subPath]))
+                upsertInstalledRecords(outcome.installed.map(name => ({
+                  name,
+                  sourceUrl: request.url,
+                  ...(outcome.sha !== undefined ? { sha: outcome.sha } : {}),
+                  ...(sourceByName.get(name) !== undefined && sourceByName.get(name) !== '' ? { subPath: sourceByName.get(name)! } : {}),
+                  ...(typeof request.ref === 'string' && request.ref.trim() !== '' ? { ref: request.ref.trim() } : {}),
+                  installedAt,
+                })))
                 // Track ownership across restarts. Batch install may return
                 // multiple names — union them all into installedSkills.
                 const current = source()
                 const merged = Array.from(new Set([...current.installedSkills, ...outcome.installed]))
                 if (merged.length !== current.installedSkills.length) {
                   try {
-                    const settings = (ctx as unknown as { get?: (name: string) => unknown }).get?.('settings') ?? ctx.settings
-                    if (settings !== undefined) {
-                      await (settings as typeof ctx.settings).update(WORKBENCH_NAMESPACE, { installedSkills: merged })
+                    const settings = ctx.get('settings')
+                    if (settings) {
+                      await settings.update(WORKBENCH_NAMESPACE, { installedSkills: merged })
                     }
                   } catch (settingsError) {
                     // Non-fatal: skill is on disk, ownership tracking is best-effort.
@@ -1303,6 +1953,7 @@ export function apply(ctx: Context, config: Config): void {
                 const skillName = cleanString(request.name)
                 if (skillName === undefined) throw new Error('skill 名称不能为空')
                 removeSkillOnDisk(skillName)
+                pruneInstalledRecords([skillName])
                 skillProvider.invalidate()
                 const current = source()
                 if (current.installedSkills.includes(skillName)) {
@@ -1322,6 +1973,58 @@ export function apply(ctx: Context, config: Config): void {
                 sendJson(res, 200, result)
               } catch (error) {
                 const result: WorkbenchSkillRemoveResult = {
+                  ok: false, error: error instanceof Error ? error.message : String(error),
+                }
+                sendJson(res, 400, result)
+              }
+            },
+            (error: unknown) => {
+              sendJson(res, 400, { ok: false, error: error instanceof Error ? error.message : String(error) })
+            },
+          )
+          return
+        }
+
+        // POST /skills/update — re-clone the recorded origin and apply the
+        // source head (roadmap P3-21). Same SHA → changed:false, reinstall is
+        // idempotent; newer head → overwrite + refresh the record.
+        if (sub === '/skills/update') {
+          if (method !== 'POST') {
+            sendJson(res, 405, { ok: false, error: '仅支持 POST 请求' })
+            return
+          }
+          void readJsonBody(req, MAX_SKILL_BYTES).then(
+            async (raw) => {
+              try {
+                const request = raw as WorkbenchSkillUpdateRequest
+                const name = cleanString(request.name)
+                if (name === undefined) throw new Error('name 不能为空')
+                const record = readInstalledRecords().find(entry => entry.name === name)
+                if (record === undefined) throw new Error(`没有「${name}」的安装记录，无法检查更新`)
+                if (record.sourceUrl === undefined || record.sourceUrl === '') {
+                  throw new Error(`「${name}」是手写技能，没有来源仓库可更新`)
+                }
+                const outcome = await importSkillFromGit({
+                  url: record.sourceUrl,
+                  name,
+                  ...(record.subPath !== undefined && record.subPath !== '' ? { subPath: record.subPath } : {}),
+                  ...(record.ref !== undefined && record.ref !== '' ? { ref: record.ref } : {}),
+                })
+                skillProvider.invalidate()
+                const sha = outcome.sha
+                const changed = sha !== undefined && record.sha !== undefined && sha !== record.sha
+                if (sha !== undefined) {
+                  upsertInstalledRecords([{ ...record, sha, installedAt: new Date().toISOString() }])
+                }
+                const result: WorkbenchSkillUpdateResult = {
+                  ok: true,
+                  changed,
+                  ...(sha !== undefined ? { sha } : {}),
+                  installed: outcome.installed,
+                }
+                sendJson(res, 200, result)
+              } catch (error) {
+                const result: WorkbenchSkillUpdateResult = {
                   ok: false, error: error instanceof Error ? error.message : String(error),
                 }
                 sendJson(res, 400, result)
@@ -1363,8 +2066,4 @@ export function apply(ctx: Context, config: Config): void {
     })
     return () => { disposeRoutes() }
   }, 'whaletv-workbench: http routes')
-
-  // readdirSync is used by future skill provider work; suppress unused-import
-  // lint until then. Kept imported for the follow-up register-provider seam.
-  void readdirSync
 }

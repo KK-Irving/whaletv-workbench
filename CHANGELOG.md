@@ -2,6 +2,126 @@
 
 Notable changes per version. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) loosely; pre-1.0 minor bumps carry feature-level changes because the API surface is still shaping up.
 
+## 0.7.0 — 2026-09-03
+
+Roadmap execution release: P1 (update experience), the core of P2 (workbench
+capabilities) and P3 (skill versioning), per [ROADMAP.md](./docs/ROADMAP.md).
+
+### Added
+
+- **Update experience (P1)**, modeled on x-hub's upgrade chain:
+  - `GET /update/check` — "检查更新" split from "更新": fetches the remote,
+    reports ahead/behind and the newest 20 incoming commits without touching
+    the working tree; the panel shows a commit-list banner with apply/skip.
+  - `GET /update/history` + `POST /update/rollback` — every update attempt is
+    recorded to `$DSH_HOME/whaletv-workbench/updates.json` (capped at 20);
+    the panel's footer shows the last successful update and a "回滚上一版本"
+    button (`git reset --hard` to the recorded before-SHA + rebuild; refuses
+    a dirty worktree).
+  - `POST /update/skip` — "跳过此版本": marks the upstream head
+    (`skippedHead` settings field) so the checker flags it instead of
+    nagging; a successful update clears the marker.
+- **最近使用 rail (P2-12)**: `GET /usage` + `POST /usage/record` track per-item
+  launch counts (`usage.json`, capped at 500); the panel renders the top 10
+  as clickable chips above the groups.
+- **Alt+W toggles the panel (P2-13)** from anywhere on the page.
+- **Search keyboard navigation (P2-14)**: ↑↓ move a visible cursor across
+  the flattened matches, Enter runs the selected entry, the cursor row
+  scrolls into view.
+- **Drag reorder (P2-15)**: in edit mode, entries drag within and across
+  groups; drops land before a target card or append to the group body.
+- **Reachability check (P2-16)**: `GET /health` probes every entry (HEAD
+  with GET fallback for 403/405 shields, 5s timeout; path existence for
+  local targets); edit mode grows a "检查可达性" button and cards show ✓/✗
+  badges with detail tooltips.
+- **Favicon proxy (P2-17)**: `GET /icon?url=<origin>` caches per-origin
+  favicons under the workbench state dir (private-network origins refused,
+  512KB cap) and web cards show the icon.
+- **Skill versioning (P3-20)**: installs/imports now record
+  `$DSH_HOME/whaletv-workbench/installed-skills.json` — per-skill source
+  URL, sub-path, ref, and source-head SHA; `/skills` exposes the record as
+  `origin`, and skill cards show "来源：… @ sha · date".
+- **Per-skill "检查更新" (P3-21)**: `POST /skills/update` re-clones the
+  recorded origin and applies a newer head (`changed` reports whether the
+  SHA moved); the button only appears for skills with a Git origin.
+- **Skill panel editor (P3-23)**: `GET /skills/source?name=` serves the raw
+  SKILL.md of a `$DSH_HOME/skills`-managed skill; removable skill cards grow
+  an "编辑" button and an in-panel textarea editor whose save goes back
+  through the install route (in-place overwrite).
+- **Smoke covers the security boundaries (P4-28)**: the host smoke now
+  asserts that git-import rejects `file://` URLs, the reserved `skill` name,
+  non-kebab names, ref metacharacters, and `..` traversal before any
+  subprocess spawns; that `/update/skip` validates the SHA charset; and that
+  the favicon proxy refuses loopback origins.
+
+### Fixed
+
+- **Install-over-existing no longer erases versioning records**: writing a
+  skill that already has an origin record (the panel editor's save path)
+  now preserves the previous sourceUrl/sha/subPath/ref and only refreshes
+  the install timestamp.
+
+### Changed
+
+- Settings tab label is plain registrant-owned text on
+  `settings.plugins.tab` (0.6.1's migration, now with an explicit order).
+
+## 0.6.1 — 2026-09-03
+
+Alignment release for dsh **0.1.6-alpha.2**. The 0.1.6 client surface moved
+twice under this plugin: the sessions catalog dropped the `current` field
+(navigation moved to view owners) and the keyed `settings.plugin.item` card
+slot was replaced by feature-owned tabs in `settings.plugins.tab`. Plus the
+roadmap P0 hardening: CI, version-consistency gate, and precise restart
+signaling (see [ROADMAP.md](./docs/ROADMAP.md)).
+
+### Fixed
+
+- **`referenceSkill` reads the on-screen session the dsh ≥ 0.1.6 way.**
+  `SessionListState` no longer carries `current`; the client now finds the
+  session retained by the `mainView` source in `list.getSnapshot().byId` —
+  the same heuristic ui-layout's `DocumentTitle` and the workspace browser
+  use. No on-screen session → the panel keeps its "open a session first"
+  hint.
+- **Settings card registers into `settings.plugins.tab`.** The keyed
+  `settings.plugin.item` seam is gone upstream; the workbench now
+  contributes a feature-owned tab (id `whaletv-workbench`, order 50,
+  plain-string label) whose inject face binds the `whaletv-workbench`
+  settings scope exactly as before. The `SettingsCard` component itself is
+  unchanged. `smoke-apply` expectations moved with it.
+
+### Added
+
+- **CI** (`.github/workflows/ci.yml`): install → `check:version` → bundle →
+  mock smoke on every push/PR. Deliberately harness-type-free; real dsh
+  types are covered by the weekly alignment job.
+- **dsh alignment workflow** (`.github/workflows/align.yml`): weekly cron +
+  manual dispatch on Windows — clones `deepseek-ai/deepseek-harness`,
+  builds its lib faces, links peers, then runs `tsc --noEmit` + full smoke
+  against harness HEAD. This is the drift alarm the mock smokes can't
+  provide (the 0.5.0 breakage shipped green).
+- **`pnpm run check:version`** (`scripts/check-version.mjs`): fails when
+  README.md / docs/DESIGN.md `当前版本 **v…**` markers disagree with
+  package.json — the three copies had drifted (v0.5.1 vs 0.6.0).
+- **`pnpm run smoke` now gates types**: check:version → `tsc --noEmit` →
+  three contract smokes. `smoke:ci` is the harness-free subset for CI.
+
+### Changed
+
+- **`needRestart` is host-diff-precise.** The update pipeline now answers
+  "restart needed?" by diffing the pulled range for `src/index.ts` /
+  `tsdown.config.ts` / `package.json` instead of always true-on-change;
+  client-only pulls hot-inject without the restart nag. The panel message
+  branches on the field.
+- **`link-harness-deps.mjs` works without `$DSH_HOME`.** The peer-repair
+  pass (peerDependencies → harness checkout) now runs even when the flat
+  fallback directory is absent — the prerequisite for the CI alignment job
+  and for fresh-clone setups.
+- Dead code cleanup: the no-op `void readdirSync` tail in `apply()`, the
+  identity ternary in the skill-import traversal guard, and a divergent
+  `ctx.get('settings')` spelling in the import route now match the rest of
+  the file.
+
 ## 0.6.0 — 2026-09-03
 
 ### Added

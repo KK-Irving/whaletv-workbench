@@ -93,7 +93,9 @@ try {
   }
   handler = route.handler
 
-  /** Drive one request through the prefix handler and resolve its JSON response. */
+  /** Drive one request through the prefix handler and resolve its response.
+   * Non-JSON bodies (the favicon proxy serves images/plain text) resolve as
+   * `{ raw }` so boundary assertions can still read the status. */
   function request(method, subPath, body) {
     return new Promise((resolve) => {
       const req = Object.assign(new EventEmitter(), {
@@ -104,7 +106,11 @@ try {
       const res = {
         status: 0,
         writeHead(status) { this.status = status },
-        end(payload) { resolve({ status: this.status, body: JSON.parse(payload) }) },
+        end(payload) {
+          let parsed
+          try { parsed = JSON.parse(payload) } catch { parsed = { raw: String(payload) } }
+          resolve({ status: this.status, body: parsed })
+        },
       }
       handler(req, res)
       if (body !== undefined) req.emit('data', Buffer.from(body))
@@ -160,7 +166,36 @@ try {
     throw new Error(`unknown sub-path should 404: ${nonsense.status} ${JSON.stringify(nonsense.body)}`)
   }
 
-  console.log('smoke-host: OK — prefix route dispatch (state/config/update/skills/session/followup), sanitize + persist, 405/404 boundaries')
+  // 8. Git-import safety boundaries reject BEFORE any subprocess spawns
+  //    (roadmap P4-28): URL whitelist, reserved name, kebab-case, ref
+  //    charset, and path traversal all fail fast with readable errors.
+  const importBoundaries = [
+    [{ url: 'file:///etc/passwd', name: 'ok-name' }, '仅支持 http'],
+    [{ url: 'https://github.com/o/r', name: 'skill' }, '冲突'],
+    [{ url: 'https://github.com/o/r', name: 'Bad_Name' }, 'kebab-case'],
+    [{ url: 'https://github.com/o/r', name: 'ok-name', ref: 'a;rm' }, 'ref/branch'],
+    [{ url: 'https://github.com/o/r', name: 'ok-name', subPath: '../x' }, '..'],
+  ]
+  for (const [payload, needle] of importBoundaries) {
+    const hit = await request('POST', '/skills/import', JSON.stringify(payload))
+    if (hit.status !== 400 || !String(hit.body.error ?? '').includes(needle)) {
+      throw new Error(`/skills/import boundary (${needle}) should 400: ${hit.status} ${JSON.stringify(hit.body)}`)
+    }
+  }
+
+  // 9. Update-skip validates the SHA charset.
+  const badSkip = await request('POST', '/update/skip', JSON.stringify({ sha: 'not-a-sha; rm -rf' }))
+  if (badSkip.status !== 400 || !String(badSkip.body.error ?? '').includes('sha')) {
+    throw new Error(`/update/skip bad sha should 400: ${badSkip.status} ${JSON.stringify(badSkip.body)}`)
+  }
+
+  // 10. Favicon proxy refuses loopback / private origins (roadmap P2-17).
+  const icon = await request('GET', `/icon?url=${encodeURIComponent('http://127.0.0.1/')}`)
+  if (icon.status !== 400) {
+    throw new Error(`/icon private origin should 400: ${icon.status} ${JSON.stringify(icon.body)}`)
+  }
+
+  console.log('smoke-host: OK — prefix dispatch (state/config/update*/skills*/usage/health/icon/session), sanitize + persist, 405/404 + git-import/skip/icon boundaries')
 } catch (error) {
   console.error('smoke-host: FAILED:', error)
   process.exitCode = 1

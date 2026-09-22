@@ -6,8 +6,8 @@
  * - SidebarEntry fills `sidebar.footer.action` with the workbench trigger.
  * - WorkbenchPanel fills `shell.overlay` with the dashboard (groups /
  *   skills / update flow).
- * - SettingsCard fills `settings.plugin.item` on the settings page's
- *   Plugins tab with a schema-driven form for the two scalar prefs.
+ * - SettingsCard fills `settings.plugins.tab` on the settings page's
+ *   Plugins section with a schema-driven form for the two scalar prefs.
  *
  * Slot declarations from the shipped shell are awaited via
  * `ctx.slots.inject`, so apply order against ui-sidebar / ui-layout /
@@ -27,7 +27,13 @@ import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 // ISessions above.
 import type { IConversation } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import { writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives'
-// Type-only: pull the settings-plugins SlotMap merge (settings.plugin.item).
+// Type-only: the client settings-scope Context merge (ctx.settingsScope) and
+// the settings SlotMap merges — dsh ≥ 0.1.6 declares the Plugins-page tab slot
+// ('settings.plugins.tab') in the settings domain base (ui-settings), not in
+// ui-settings-plugins (which owns the section chrome and renders the tabs).
+import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
+// Type-only: keep the ui-settings-plugins dependency explicit — its apply
+// declares the 'settings.plugins.tab' child slot at runtime and renders it.
 import type {} from '@deepseek-ai/dsh-client-ui-settings-plugins/client'
 // Type-only: pull the uiWorkspace Context merge (startSession navigation).
 import type {} from '@deepseek-ai/dsh-client-ui-workspace/client'
@@ -35,9 +41,12 @@ import type { WorkbenchInjected } from './contract.ts'
 // Type-only: the Host Config type parameterizes the settings scope binding.
 import type { Config } from '../index.ts'
 import type {
-  WorkbenchConfigSaveResult, WorkbenchSessionFollowupResult, WorkbenchSkillImportRequest,
-  WorkbenchSkillImportResult, WorkbenchSkillInstallRequest, WorkbenchSkillInstallResult,
-  WorkbenchSkillList, WorkbenchSkillRemoveResult, WorkbenchState, WorkbenchUpdateResult,
+  WorkbenchConfigSaveResult, WorkbenchHealth, WorkbenchSessionFollowupResult,
+  WorkbenchSkillImportRequest, WorkbenchSkillImportResult, WorkbenchSkillInstallRequest,
+  WorkbenchSkillInstallResult, WorkbenchSkillList, WorkbenchSkillRemoveResult,
+  WorkbenchSkillSourceResult, WorkbenchSkillUpdateResult, WorkbenchState,
+  WorkbenchUpdateCheckResult, WorkbenchUpdateHistory, WorkbenchUpdateResult,
+  WorkbenchUpdateRollbackResult, WorkbenchUpdateSkipResult, WorkbenchUsage,
 } from '../shared.ts'
 import { createWorkbenchStore } from './store.ts'
 import { SidebarEntry } from './SidebarEntry.tsx'
@@ -135,6 +144,30 @@ export function apply(ctx: ClientContext): void {
       body: JSON.stringify(config),
     }),
     update: () => fetchJson<WorkbenchUpdateResult>('/whaletv/workbench/update', { method: 'POST' }),
+    checkUpdate: () => fetchJson<WorkbenchUpdateCheckResult>('/whaletv/workbench/update/check'),
+    loadUpdateHistory: () => fetchJson<WorkbenchUpdateHistory>('/whaletv/workbench/update/history'),
+    skipUpdate: (sha: string) =>
+      fetchJson<WorkbenchUpdateSkipResult>('/whaletv/workbench/update/skip', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sha }),
+      }),
+    rollbackUpdate: () => fetchJson<WorkbenchUpdateRollbackResult>('/whaletv/workbench/update/rollback', { method: 'POST' }),
+    loadUsage: () => fetchJson<WorkbenchUsage>('/whaletv/workbench/usage'),
+    recordUsage: async (itemId: string) => {
+      // Fire-and-forget telemetry: a failed ledger write must never break the
+      // launch the user asked for.
+      try {
+        return await fetchJson<{ ok: boolean }>('/whaletv/workbench/usage/record', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ itemId }),
+        })
+      } catch {
+        return { ok: false }
+      }
+    },
+    checkHealth: () => fetchJson<WorkbenchHealth>('/whaletv/workbench/health'),
     loadSkills: () => fetchJson<WorkbenchSkillList>('/whaletv/workbench/skills'),
     installSkill: (request: WorkbenchSkillInstallRequest) =>
       fetchJson<WorkbenchSkillInstallResult>('/whaletv/workbench/skills/install', {
@@ -154,6 +187,14 @@ export function apply(ctx: ClientContext): void {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name }),
       }),
+    updateSkill: (name: string) =>
+      fetchJson<WorkbenchSkillUpdateResult>('/whaletv/workbench/skills/update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+      }),
+    loadSkillSource: (name: string) =>
+      fetchJson<WorkbenchSkillSourceResult>(`/whaletv/workbench/skills/source?name=${encodeURIComponent(name)}`),
     followup: (prompt, sessionId) =>
       fetchJson<WorkbenchSessionFollowupResult>('/whaletv/workbench/session/followup', {
         method: 'POST',
@@ -164,10 +205,18 @@ export function apply(ctx: ClientContext): void {
       // Reference the skill inline in the CURRENT session: write `/<name>`
       // into its composer draft and let the user send it (dsh's `/` skill
       // trigger resolves it), instead of spawning a new session.
+      //
+      // dsh ≥ 0.1.6 moved "which session is on screen" out of the sessions
+      // catalog (SessionListState lost `current`; navigation belongs to view
+      // owners). The canonical client-side read is the `mainView` retention
+      // source — the same heuristic ui-layout's DocumentTitle and the
+      // workspace browser use: exactly one session is retained by the main
+      // view, and that is the one whose composer the user sees.
       const sessions = ctx.get('sessions') as unknown as ISessions | undefined
       const conversation = ctx.get('conversation') as unknown as IConversation | undefined
       if (sessions === undefined || conversation === undefined) return { ok: false, reason: 'no-session' }
-      const currentId = sessions.list.getSnapshot().current
+      const list = sessions.list.getSnapshot()
+      const currentId = Object.values(list.byId).find(session => (session.retainedBy.mainView ?? 0) > 0)?.id
       if (currentId === undefined) return { ok: false, reason: 'no-session' }
       const actx = sessions.scope(currentId)
       if (actx === undefined) return { ok: false, reason: 'no-session' }
@@ -196,17 +245,19 @@ export function apply(ctx: ClientContext): void {
     },
     WorkbenchPanel,
   ))
-  // Settings page card — the `settings.plugin.item` slot is declared
-  // `kind: 'keyed'` (see @deepseek-ai/dsh-client-ui-settings-plugins/client)
-  // and pairs each card to its Host counterpart by the shared settings
-  // namespace. Registration therefore takes `key: '<settings-namespace>'`,
-  // not `id`. If a future dsh RC flips this back to `kind: 'list'`, the
-  // runtime error will name the missing option again and this pair should
-  // change together with the type file.
-  ctx.slots.inject('settings.plugin.item', () => ctx.slots.register(
+  // Settings Plugins-page tab — dsh ≥ 0.1.6 replaced the old keyed
+  // `settings.plugin.item` card with feature-owned tabs in the
+  // `settings.plugins.tab` list slot (declared at runtime by
+  // ui-settings-plugins' PluginsSettingsSection; a lone contribution fills
+  // the whole Plugins page, several render as a localized tab bar).
+  // Registration carries `id` (tab key) and `order`; the label is plain
+  // registrant-owned text (resolveSlotLabel accepts string | () => string).
+  ctx.slots.inject('settings.plugins.tab', () => ctx.slots.register(
     {
-      name: 'settings.plugin.item',
-      key: 'whaletv-workbench',
+      name: 'settings.plugins.tab',
+      id: 'whaletv-workbench',
+      order: 50,
+      label: 'WhaleTV 工作台',
       inject: () => ({
         scope: ctx.settingsScope.bind<Config>({ namespace: 'whaletv-workbench' }),
       }),

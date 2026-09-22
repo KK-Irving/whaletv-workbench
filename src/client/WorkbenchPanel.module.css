@@ -479,3 +479,143 @@
   font-size: 11px;
   word-break: break-all;
 }
+
+/* Update check banner (roadmap P1: 检查更新 / 跳过此版本 / 回滚). */
+.checkBanner {
+  margin: 12px 16px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-2);
+}
+
+.checkHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-primary);
+}
+
+.checkMeta {
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--dsw-alias-label-caption);
+}
+
+.checkList {
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+  max-height: 160px;
+  overflow-y: auto;
+}
+
+.checkItem {
+  display: flex;
+  gap: 8px;
+  padding: 2px 0;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.checkSha {
+  flex: none;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: var(--dsw-alias-markdown-inline-code);
+  font-family: var(--dsw-font-family-mono, ui-monospace, 'Cascadia Mono', Consolas, monospace);
+  font-size: 11px;
+  line-height: 18px;
+}
+
+.checkActions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.rollbackRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--dsw-alias-label-caption);
+}
+
+/* 最近使用 rail (roadmap P2-12). */
+.recentBar {
+  margin-bottom: 16px;
+}
+
+.recentChips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.recentChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 999px;
+  background: var(--dsw-alias-bg-layer-2);
+  font: inherit;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+}
+
+.recentChip:hover {
+  border-color: var(--dsw-alias-border-l3);
+  color: var(--dsw-alias-label-primary);
+}
+
+.recentCount {
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--dsw-alias-markdown-inline-code);
+  font-size: 10px;
+  line-height: 14px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+/* Entry-card favicon (roadmap P2-17). */
+.itemIcon {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 3px;
+}
+
+/* Search keyboard-navigation cursor (roadmap P2-14). */
+.itemActive {
+  outline: 2px solid var(--dsw-alias-border-l3);
+  outline-offset: 1px;
+}
+
+/* Reachability badge (roadmap P2-16). */
+.healthDot {
+  flex: none;
+  padding: 0 5px;
+  border-radius: 999px;
+  font-size: 10px;
+  line-height: 14px;
+}
+
+.healthOk {
+  background: var(--dsw-alias-state-success-tertiary, var(--dsw-alias-markdown-inline-code));
+  color: var(--dsw-alias-state-success-label, var(--dsw-alias-label-tertiary));
+}
+
+.healthBad {
+  background: var(--dsw-alias-state-warn-tertiary);
+  color: var(--dsw-alias-state-warn-label);
+}

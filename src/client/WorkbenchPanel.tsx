@@ -11,18 +11,18 @@
  * saveConfig route, then re-read via loadState.
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { MouseEvent } from 'react'
+import type { DragEvent, MouseEvent } from 'react'
 import { Button, Input } from '@deepseek-ai/dsh-client-ui-primitives'
 import clsx from 'clsx'
 import type { WorkbenchInjected, WorkbenchPanelProps } from './contract.ts'
 import type {
-  WorkbenchConfig, WorkbenchGroup, WorkbenchItem, WorkbenchSkillList, WorkbenchSkillSummary,
+  WorkbenchConfig, WorkbenchGroup, WorkbenchHealthEntry, WorkbenchItem, WorkbenchSkillList,
+  WorkbenchSkillSummary, WorkbenchUpdateCheckResult, WorkbenchUsageRecord,
 } from '../shared.ts'
 import { WORKBENCH_ICON } from './icon.ts'
 import css from './WorkbenchPanel.module.css'
 
-/** The one action label each entry kind drives. */
-function actionLabel(item: WorkbenchItem): string {
+/** The one action label each entry kind drives. */function actionLabel(item: WorkbenchItem): string {
   if (item.url !== undefined && item.url !== '') return '打开网页'
   if (item.path !== undefined && item.path !== '') return '打开'
   if (item.prompt !== undefined && item.prompt !== '') return '在会话中使用'
@@ -94,6 +94,51 @@ function kindPlaceholder(kind: TargetKind): string {
   return '提示词文本…'
 }
 
+/** Per-origin favicon proxy URL for a web entry ('' when the URL is unusable). */
+function iconSrcFor(url: string): string {
+  try {
+    return `/whaletv/workbench/icon?url=${encodeURIComponent(new URL(url).origin)}`
+  } catch {
+    return ''
+  }
+}
+
+/**
+ * Move one item across/within groups (roadmap P2-15): remove it from its
+ * group and insert it before `beforeItemId` (or appended when null).
+ * @returns the new config, or null when the source item vanished.
+ */
+function moveItem(
+  config: WorkbenchConfig,
+  from: { groupId: string; itemId: string },
+  toGroupId: string,
+  beforeItemId: string | null,
+): WorkbenchConfig | null {
+  let moved: WorkbenchItem | undefined
+  const stripped = config.groups.map(group => {
+    if (group.id !== from.groupId) return group
+    const item = group.items.find(candidate => candidate.id === from.itemId)
+    if (item === undefined) return group
+    moved = item
+    return { ...group, items: group.items.filter(candidate => candidate.id !== from.itemId) }
+  })
+  if (moved === undefined) return null
+  // Definite alias: TS cannot narrow `moved` through the closure above.
+  const movedItem: WorkbenchItem = moved
+  const groups = stripped.map(group => {
+    if (group.id !== toGroupId) return group
+    if (beforeItemId === null || beforeItemId === from.itemId) {
+      return { ...group, items: [...group.items, movedItem] }
+    }
+    const index = group.items.findIndex(candidate => candidate.id === beforeItemId)
+    if (index < 0) return { ...group, items: [...group.items, movedItem] }
+    const items = [...group.items]
+    items.splice(index, 0, movedItem)
+    return { ...group, items }
+  })
+  return { groups }
+}
+
 /** Inline entry form (used for both new and existing entries). */
 function ItemForm(props: {
   draft: ItemFormDraft
@@ -140,13 +185,22 @@ function ItemForm(props: {
   )
 }
 
-/** One entry card: title, description, and its kind-specific actions (or the inline form in edit mode). */
+/**
+ * One entry card: title, description, and its kind-specific actions (or the
+ * inline form in edit mode). Edit mode additionally enables drag-reorder
+ * (roadmap P2-15); a favicon shows for web entries (P2-17) and a reachability
+ * badge after a health run (P2-16).
+ */
 function ItemCard(props: {
   item: WorkbenchItem
   editMode: boolean
   editing: boolean
   draft: ItemFormDraft
   saving: boolean
+  /** Search keyboard-navigation cursor (P2-14). */
+  highlight?: boolean
+  /** Last health-probe outcome for this item, when a run happened (P2-16). */
+  health?: WorkbenchHealthEntry
   onDraftChange: (patch: Partial<ItemFormDraft>) => void
   onSaveDraft: () => void
   onCancelDraft: () => void
@@ -156,30 +210,62 @@ function ItemCard(props: {
   onOpenPath: (path: string) => void
   onUseSkill: (prompt: string) => void
   onCopy: (prompt: string) => void
+  onDragStartItem?: () => void
+  onDropOnItem?: () => void
 }) {
   const {
-    item, editMode, editing, draft, saving,
+    item, editMode, editing, draft, saving, highlight, health,
     onDraftChange, onSaveDraft, onCancelDraft, onEdit, onDelete,
     onOpenUrl, onOpenPath, onUseSkill, onCopy,
+    onDragStartItem, onDropOnItem,
   } = props
   const configured = isConfigured(item)
+  const iconSrc = item.url !== undefined && item.url !== '' ? iconSrcFor(item.url) : ''
 
   const head = (
     <div className={css.itemHead}>
+      {iconSrc !== '' && (
+        <img
+          src={iconSrc}
+          alt=""
+          className={css.itemIcon}
+          onError={event => { event.currentTarget.style.display = 'none' }}
+        />
+      )}
       <span className={css.itemTitle}>{item.title}</span>
       {!configured && <span className={css.badge}>待配置</span>}
+      {health !== undefined && (
+        <span
+          className={clsx(css.healthDot, health.ok ? css.healthOk : css.healthBad)}
+          title={health.detail ?? (health.ok ? '可达' : '不可达')}
+        >
+          {health.ok ? '✓' : '✗'}
+        </span>
+      )}
     </div>
   )
+  const dragHandlers = editMode && !editing
+    ? {
+        draggable: true,
+        onDragStart: () => { onDragStartItem?.() },
+        onDragOver: (event: DragEvent<HTMLDivElement>) => { event.preventDefault() },
+        onDrop: () => { onDropOnItem?.() },
+      }
+    : {}
   if (editing) {
     return (
-      <div className={clsx(css.item, css.itemEditing)}>
+      <div className={clsx(css.item, css.itemEditing)} data-wb-item={item.id}>
         {head}
         <ItemForm draft={draft} saving={saving} onChange={onDraftChange} onSave={onSaveDraft} onCancel={onCancelDraft} />
       </div>
     )
   }
   return (
-    <div className={css.item}>
+    <div
+      {...dragHandlers}
+      className={clsx(css.item, highlight === true && css.itemActive)}
+      data-wb-item={item.id}
+    >
       {head}
       {item.description !== undefined && item.description !== ''
         && <p className={css.itemDesc}>{item.description}</p>}
@@ -209,6 +295,81 @@ function ItemCard(props: {
   )
 }
 
+/** 最近使用 rail (roadmap P2-12): top launched entries as clickable chips. */
+function RecentBar(props: {
+  entries: Array<{ id: string; title: string; count: number; lastUsed: string }>
+  onRun: (id: string) => void
+}) {
+  const { entries, onRun } = props
+  if (entries.length === 0) return null
+  return (
+    <section className={css.recentBar} aria-label="最近使用">
+      <h2 className={css.groupTitle}>最近使用</h2>
+      <div className={css.recentChips}>
+        {entries.map(entry => (
+          <button
+            key={entry.id}
+            type="button"
+            className={css.recentChip}
+            title={`${entry.title} · 已用 ${entry.count} 次`}
+            onClick={() => { onRun(entry.id) }}
+          >
+            {entry.title}
+            <span className={css.recentCount}>{entry.count}</span>
+          </button>
+        ))}
+      </div>
+    </section>
+  )
+}
+
+/**
+ * "检查更新" result banner (roadmap P1-8 / P1-10): the incoming commit list
+ * plus apply / skip / dismiss actions. Rendered between the header and the
+ * search row while a check result is on screen.
+ */
+function UpdateCheckBanner(props: {
+  result: WorkbenchUpdateCheckResult
+  disabled: boolean
+  onUpdate: () => void
+  onSkip: (sha: string) => void
+  onDismiss: () => void
+}) {
+  const { result, disabled, onUpdate, onSkip, onDismiss } = props
+  return (
+    <div className={css.checkBanner}>
+      <div className={css.checkHead}>
+        <span>
+          {result.skipped === true
+            ? `远端有 ${result.behind} 个新提交；最新版本（${result.remoteHead}）已被你跳过。`
+            : `远端（${result.upstream ?? 'upstream'}）有 ${result.behind} 个新提交。`}
+        </span>
+        <span className={css.spacer} />
+        <Button size="sm" className={css.dismiss} onClick={onDismiss} aria-label="关闭检查结果">✕</Button>
+      </div>
+      <p className={css.checkMeta}>
+        最新为 <code>{result.remoteHead}</code>；「更新」立即拉取，「跳过此版本」暂停提醒（远端再前进会重新提醒）。
+      </p>
+      {result.commits !== undefined && result.commits.length > 0 && (
+        <ul className={css.checkList}>
+          {result.commits.map(commit => (
+            <li key={commit.sha} className={css.checkItem}>
+              <span className={css.checkSha}>{commit.sha}</span>
+              <span>{commit.subject}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className={css.checkActions}>
+        <Button size="sm" variant="primary" onClick={onUpdate} disabled={disabled}>更新</Button>
+        {result.remoteHead !== undefined && result.skipped !== true && (
+          <Button size="sm" variant="outline" onClick={() => { onSkip(result.remoteHead!) }} disabled={disabled}>跳过此版本</Button>
+        )}
+      </div>
+    </div>
+  )
+}
+
 /** The workbench dashboard (see module doc). */
 export function WorkbenchPanel({
   useStore,
@@ -220,10 +381,19 @@ export function WorkbenchPanel({
   loadState,
   saveConfig,
   update,
+  checkUpdate,
+  loadUpdateHistory,
+  skipUpdate,
+  rollbackUpdate,
+  loadUsage,
+  recordUsage,
+  checkHealth,
   loadSkills,
   installSkill,
   importSkill,
   removeSkill,
+  updateSkill,
+  loadSkillSource,
   followup,
   referenceSkill,
 }: WorkbenchPanelProps) {
@@ -236,6 +406,9 @@ export function WorkbenchPanel({
   const lastResult = useStore(s => s.lastResult)
   const skills = useStore(s => s.skills)
   const skillsLoading = useStore(s => s.skillsLoading)
+  const checking = useStore(s => s.checking)
+  const checkResult = useStore(s => s.checkResult)
+  const updateHistory = useStore(s => s.updateHistory)
 
   const [editMode, setEditMode] = useState(false)
   const [editing, setEditing] = useState<ItemEditing | null>(null)
@@ -243,6 +416,15 @@ export function WorkbenchPanel({
   const [groupTitleDraft, setGroupTitleDraft] = useState('')
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
+  /** 最近使用 ledger (P2-12); refreshed on open and after every launch. */
+  const [usage, setUsage] = useState<Record<string, WorkbenchUsageRecord>>({})
+  /** Last health-run results (P2-16); lives until the next run / remount. */
+  const [health, setHealth] = useState<Record<string, WorkbenchHealthEntry> | null>(null)
+  const [healthBusy, setHealthBusy] = useState(false)
+  /** Search keyboard-navigation cursor into the flat match list (P2-14). */
+  const [activeIndex, setActiveIndex] = useState<number | null>(null)
+  /** Item currently being drag-reordered (P2-15). */
+  const dragRef = useRef<{ groupId: string; itemId: string } | null>(null)
 
   // Auto-dismiss timer for the "already up to date" notification (no log to
   // read → 5s countdown). Cleared on manual ✕, next update start, or unmount.
@@ -298,6 +480,16 @@ export function WorkbenchPanel({
     }
   }, [actions, loadSkills])
 
+  /** Read the rolling update history for the footer rollback affordance (P1-9). */
+  const reloadHistory = useCallback(async () => {
+    try {
+      const history = await loadUpdateHistory()
+      actions.setUpdateHistory(history.entries)
+    } catch {
+      // History is an affordance, not a requirement — keep whatever we had.
+    }
+  }, [actions, loadUpdateHistory])
+
   const runUpdate = useCallback(async () => {
     clearDismissTimer()
     actions.setUpdating(true)
@@ -307,12 +499,17 @@ export function WorkbenchPanel({
       const result = await update()
       if (result.changed === true) {
         actions.setUpdateLog(result.output ?? '')
+        // needRestart is host-diff-precise (see Host runUpdate): only a
+        // src/index.ts / tsdown.config.ts / package.json change asks for a
+        // restart; client-only pulls hot-inject and refresh on their own.
         actions.setLastResult(
-          result.rebuilt === true
-            ? '更新完成并已热注入，界面将自动刷新。若本次更新涉及服务端改动，请重启 dsh。'
-            : '已拉取到最新提交（无需重建）。',
+          result.needRestart === true
+            ? '更新完成。本次包含服务端改动，请重启 dsh web 后生效。'
+            : '更新完成并已热注入，界面将自动刷新。',
         )
+        actions.setCheckResult(null)
         void reload()
+        void reloadHistory()
       } else {
         // No new commits — no log to read; auto-dismiss after 5s.
         actions.setUpdateLog('')
@@ -328,7 +525,67 @@ export function WorkbenchPanel({
     } finally {
       actions.setUpdating(false)
     }
-  }, [actions, update, reload, clearDismissTimer])
+  }, [actions, update, reload, reloadHistory, clearDismissTimer])
+
+  /**
+   * "检查更新" flow (roadmap P1-8): fetch + ahead/behind + commit list on
+   * the Host, no working-tree changes. The result drives the banner; the
+   * header git badge reads the same store field.
+   */
+  const runCheck = useCallback(async () => {
+    actions.setChecking(true)
+    try {
+      const result = await checkUpdate()
+      actions.setCheckResult(result)
+    } catch (error) {
+      actions.setCheckResult({
+        ok: false, upToDate: false,
+        error: error instanceof Error ? error.message : String(error),
+      })
+    } finally {
+      actions.setChecking(false)
+    }
+  }, [actions, checkUpdate])
+
+  /** Mark the remote head skipped, then re-check so the banner reflects it (P1-10). */
+  const runSkip = useCallback(async (sha: string) => {
+    try {
+      await skipUpdate(sha)
+    } catch (error) {
+      actions.setLoadError(error instanceof Error ? error.message : String(error))
+      return
+    }
+    await runCheck()
+  }, [actions, skipUpdate, runCheck])
+
+  /** Reset to the state before the last successful update (P1-9). */
+  const runRollback = useCallback(async () => {
+    const previous = updateHistory?.find(entry => entry.ok === true && entry.changed === true)
+    if (previous === undefined) return
+    if (!window.confirm(`回滚到更新前（${previous.before ?? '?'}）？工作区不能有未提交修改。`)) return
+    clearDismissTimer()
+    actions.setUpdating(true)
+    actions.setUpdateLog('')
+    actions.setLastResult(null)
+    try {
+      const result = await rollbackUpdate()
+      if (result.ok) {
+        actions.setUpdateLog(result.output ?? '')
+        actions.setLastResult(`已回滚到 ${result.revertedTo ?? '上一版本'}。服务端已还原，请重启 dsh web 生效。`)
+      } else {
+        actions.setUpdateLog(result.error ?? '')
+        actions.setLastResult('回滚失败，详见下方日志。')
+      }
+      actions.setCheckResult(null)
+      void reload()
+      void reloadHistory()
+    } catch (error) {
+      actions.setUpdateLog(error instanceof Error ? error.message : String(error))
+      actions.setLastResult('回滚失败，详见下方日志。')
+    } finally {
+      actions.setUpdating(false)
+    }
+  }, [actions, rollbackUpdate, reload, reloadHistory, updateHistory, clearDismissTimer])
 
   /** Persist a whole config; on success re-read state from the Host. */
   const persistConfig = useCallback(async (next: WorkbenchConfig): Promise<boolean> => {
@@ -435,12 +692,16 @@ export function WorkbenchPanel({
 
   // Load state + skills catalog when the panel opens; Esc and backdrop
   // click close it. Skills refresh in parallel with state — they come from
-  // an independent registry and neither blocks the other's render.
+  // an independent registry and neither blocks the other's render. The
+  // update history loads alongside (cheap local read feeding the rollback
+  // affordance); the network-touching update CHECK stays explicit.
   useEffect(() => {
     if (!open) return
     void reload()
     void reloadSkills()
-  }, [open, reload, reloadSkills])
+    void reloadHistory()
+    void reloadUsage()
+  }, [open, reload, reloadSkills, reloadHistory])
   useEffect(() => {
     if (!open) return
     const onKeyDown = (event: KeyboardEvent): void => {
@@ -449,6 +710,19 @@ export function WorkbenchPanel({
     window.addEventListener('keydown', onKeyDown)
     return () => { window.removeEventListener('keydown', onKeyDown) }
   }, [open, actions])
+
+  // Alt+W toggles the panel from anywhere on the page (roadmap P2-13).
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey
+        && (event.key === 'w' || event.key === 'W')) {
+        event.preventDefault()
+        actions.toggleOpen()
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => { window.removeEventListener('keydown', onKeyDown) }
+  }, [actions])
 
   const handleOpenPath = async (path: string): Promise<void> => {
     try {
@@ -501,12 +775,70 @@ export function WorkbenchPanel({
       actions.setLoadError(error instanceof Error ? error.message : String(error))
     }
   }
+
+  /** Refresh the 最近使用 ledger (roadmap P2-12). */
+  const reloadUsage = async (): Promise<void> => {
+    try {
+      setUsage((await loadUsage()).usage)
+    } catch {
+      // Rail-only data — a failed read just leaves the rail stale.
+    }
+  }
+
+  /** Run one entry's action through its configured kind, counting the launch (P2-12). */
+  const runItemAction = (item: WorkbenchItem): void => {
+    void recordUsage(item.id).then(() => { void reloadUsage() })
+    if (item.url !== undefined && item.url !== '') {
+      openUrl(item.url)
+      return
+    }
+    if (item.path !== undefined && item.path !== '') {
+      void handleOpenPath(item.path)
+      return
+    }
+    if (item.prompt !== undefined && item.prompt !== '') {
+      void handleUseSkill(item.prompt)
+    }
+  }
+
+  /** Probe every entry's reachability and badge the cards (roadmap P2-16). */
+  const runHealth = async (): Promise<void> => {
+    setHealthBusy(true)
+    try {
+      setHealth((await checkHealth()).results)
+    } catch (error) {
+      actions.setLoadError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setHealthBusy(false)
+    }
+  }
+
+  // Drag-reorder plumbing (roadmap P2-15): the payload rides a ref (no data
+  // transfer needed inside one document); drops land on a card (insert
+  // before it) or a group body (append).
+  const handleDragStartItem = (groupId: string, itemId: string): void => {
+    dragRef.current = { groupId, itemId }
+  }
+  const handleDropOnItem = async (targetGroupId: string, targetItem: WorkbenchItem): Promise<void> => {
+    const drag = dragRef.current
+    dragRef.current = null
+    if (state === null || drag === null || drag.itemId === targetItem.id) return
+    const next = moveItem(state.config, drag, targetGroupId, targetItem.id)
+    if (next !== null) await persistConfig(next)
+  }
+  const handleDropOnGroup = async (targetGroupId: string): Promise<void> => {
+    const drag = dragRef.current
+    dragRef.current = null
+    if (state === null || drag === null || drag.groupId === targetGroupId) return
+    const next = moveItem(state.config, drag, targetGroupId, null)
+    if (next !== null) await persistConfig(next)
+  }
   const onBackdrop = (event: MouseEvent<HTMLDivElement>): void => {
     if (event.target === event.currentTarget) actions.setOpen(false)
   }
 
-  if (!open) return null
-
+  // Search projection + flat match list live before the early return so the
+  // keyboard-navigation effect can read them (roadmap P2-14).
   const query = search.trim().toLowerCase()
   const groups = (state?.config.groups ?? []).map(group => ({
     ...group,
@@ -516,6 +848,20 @@ export function WorkbenchPanel({
         item.title.toLowerCase().includes(query)
         || (item.description ?? '').toLowerCase().includes(query)),
   })).filter(group => editMode || group.items.length > 0)
+  const flatMatches = query === '' ? [] : groups.flatMap(group => group.items)
+  const effectiveActive = activeIndex !== null && flatMatches.length > 0
+    ? Math.min(activeIndex, flatMatches.length - 1)
+    : null
+  const activeItemId = effectiveActive !== null ? flatMatches[effectiveActive]?.id : undefined
+  const lastOkUpdate = updateHistory?.find(entry => entry.ok === true && entry.changed === true)
+
+  // Keep the keyboard cursor in view while arrowing through matches.
+  useEffect(() => {
+    if (activeItemId === undefined) return
+    document.querySelector(`[data-wb-item="${CSS.escape(activeItemId)}"]`)?.scrollIntoView({ block: 'nearest' })
+  }, [activeItemId])
+
+  if (!open) return null
 
   return (
     <div className={css.backdrop} onClick={onBackdrop} data-whaletv-workbench>
@@ -530,7 +876,15 @@ export function WorkbenchPanel({
               {state.git.branch}@{state.git.head}
             </span>
           )}
+          {checkResult?.ok === true && (checkResult.behind ?? 0) > 0 && (
+            <span className={css.checkMeta} title={`upstream ${checkResult.upstream ?? ''}`}>
+              落后 {checkResult.behind} 提交
+            </span>
+          )}
           <Button size="sm" onClick={() => { void reload(); void reloadSkills() }} disabled={updating || saving}>刷新</Button>
+          <Button size="sm" onClick={() => { void runCheck() }} disabled={updating || checking || saving}>
+            {checking ? '检查中…' : '检查更新'}
+          </Button>
           <Button size="sm" variant={editMode ? 'primary' : 'outline'} onClick={toggleEditMode} disabled={updating || saving}>
             {editMode ? '完成' : '编辑'}
           </Button>
@@ -552,16 +906,76 @@ export function WorkbenchPanel({
             <Button size="sm" onClick={() => { setSaveError(null) }}>知道了</Button>
           </div>
         )}
+        {checkResult !== null && (checkResult.ok === false ? (
+          <div className={css.errorBanner} role="alert">
+            检查更新失败：{checkResult.error}
+            <Button size="sm" onClick={() => { void runCheck() }} disabled={checking}>重试</Button>
+          </div>
+        ) : checkResult.upToDate === true ? (
+          <div className={css.checkBanner}>
+            <div className={css.checkHead}>
+              <span>
+                已是最新
+                {(checkResult.ahead ?? 0) > 0 ? `（本地领先 ${checkResult.ahead} 提交，尚未推送）` : ''}。
+              </span>
+              <span className={css.spacer} />
+              <Button size="sm" className={css.dismiss} onClick={() => { actions.setCheckResult(null) }} aria-label="关闭检查结果">✕</Button>
+            </div>
+          </div>
+        ) : (
+          <UpdateCheckBanner
+            result={checkResult}
+            disabled={updating || checking || saving}
+            onUpdate={() => { void runUpdate() }}
+            onSkip={sha => { void runSkip(sha) }}
+            onDismiss={() => { actions.setCheckResult(null) }}
+          />
+        ))}
 
         <div className={css.search}>
           <Input
-            placeholder="搜索网页 / 文档 / 应用 / 技能…"
+            placeholder="搜索网页 / 文档 / 应用 / 技能…（↑↓ 选择，Enter 打开）"
             value={search}
-            onChange={event => { actions.setSearch(event.target.value) }}
+            onChange={event => {
+              actions.setSearch(event.target.value)
+              setActiveIndex(null)
+            }}
+            onKeyDown={event => {
+              if (query === '' || flatMatches.length === 0) return
+              if (event.key === 'ArrowDown') {
+                event.preventDefault()
+                setActiveIndex(prev => prev === null ? 0 : Math.min(prev + 1, flatMatches.length - 1))
+              } else if (event.key === 'ArrowUp') {
+                event.preventDefault()
+                setActiveIndex(prev => prev === null ? flatMatches.length - 1 : Math.max(prev - 1, 0))
+              } else if (event.key === 'Enter') {
+                event.preventDefault()
+                const hit = flatMatches[effectiveActive ?? 0]
+                if (hit !== undefined) runItemAction(hit)
+              }
+            }}
           />
         </div>
 
         <div className={css.body}>
+          {query === '' && (
+            <RecentBar
+              entries={Object.entries(usage)
+                .sort(([, a], [, b]) => (a.lastUsed < b.lastUsed ? 1 : -1))
+                .slice(0, 10)
+                .map(([id, record]) => {
+                  const item = (state?.config.groups ?? []).flatMap(group => group.items).find(candidate => candidate.id === id)
+                  return item !== undefined
+                    ? { id, title: item.title, count: record.count, lastUsed: record.lastUsed }
+                    : null
+                })
+                .filter((entry): entry is { id: string; title: string; count: number; lastUsed: string } => entry !== null)}
+              onRun={id => {
+                const item = (state?.config.groups ?? []).flatMap(group => group.items).find(candidate => candidate.id === id)
+                if (item !== undefined) runItemAction(item)
+              }}
+            />
+          )}
           {state === null && loadError === null && <p className={css.hint}>正在加载工作台配置…</p>}
           {state !== null && groups.length === 0 && (
             <p className={css.hint}>
@@ -595,7 +1009,11 @@ export function WorkbenchPanel({
                   )}
                 </div>
               )}
-              <div className={css.grid}>
+              <div
+                className={css.grid}
+                onDragOver={event => { if (editMode) event.preventDefault() }}
+                onDrop={() => { if (editMode) void handleDropOnGroup(group.id) }}
+              >
                 {group.items.map(item => (
                   <ItemCard
                     key={item.id}
@@ -604,6 +1022,8 @@ export function WorkbenchPanel({
                     editing={editMode && editing !== null && editing.groupId === group.id && editing.itemId === item.id}
                     draft={editing?.draft ?? emptyDraft()}
                     saving={saving}
+                    highlight={activeItemId === item.id}
+                    health={health !== null ? health[item.id] : undefined}
                     onDraftChange={patch => {
                       setEditing(prev => prev === null ? prev : { ...prev, draft: { ...prev.draft, ...patch } })
                     }}
@@ -615,6 +1035,8 @@ export function WorkbenchPanel({
                     onOpenPath={path => { void handleOpenPath(path) }}
                     onUseSkill={prompt => { void handleUseSkill(prompt) }}
                     onCopy={prompt => { void handleCopy(prompt) }}
+                    onDragStartItem={() => { handleDragStartItem(group.id, item.id) }}
+                    onDropOnItem={() => { void handleDropOnItem(group.id, item) }}
                   />
                 ))}
                 {editMode && editing !== null && editing.groupId === group.id && editing.itemId === null && (
@@ -636,6 +1058,14 @@ export function WorkbenchPanel({
           {editMode && state !== null && (
             <div className={css.editBar}>
               <Button size="sm" variant="outline" onClick={() => { void addGroup() }} disabled={saving}>+ 新建分组</Button>
+              <Button size="sm" variant="outline" onClick={() => { void runHealth() }} disabled={healthBusy || saving} title="逐条探测 URL 可达性与本地路径存在性">
+                {healthBusy ? '检查中…' : '检查可达性'}
+              </Button>
+              {health !== null && !healthBusy && (
+                <span className={css.checkMeta}>
+                  ✓ {Object.values(health).filter(entry => entry.ok).length} / {Object.keys(health).length} 可达
+                </span>
+              )}
             </div>
           )}
           <SkillsSection
@@ -644,6 +1074,8 @@ export function WorkbenchPanel({
             query={query}
             installSkill={installSkill}
             importSkill={importSkill}
+            updateSkill={updateSkill}
+            loadSkillSource={loadSkillSource}
             onUse={(name) => { handleSkillUse(name) }}
             onRemove={(name) => { void handleSkillRemove(name) }}
             onReload={() => { void reloadSkills() }}
@@ -657,6 +1089,17 @@ export function WorkbenchPanel({
               <Button size="sm" className={css.dismiss} onClick={dismissResult} aria-label="关闭提示">✕</Button>
             </div>
             {updateLog !== '' && <pre className={css.log}>{updateLog}</pre>}
+            {lastOkUpdate !== undefined && (
+              <div className={css.rollbackRow}>
+                <span>
+                  上次成功更新 {lastOkUpdate.time.slice(0, 16).replace('T', ' ')}
+                  （{lastOkUpdate.before ?? '?'} → {lastOkUpdate.after ?? '?'}）
+                </span>
+                <Button size="sm" variant="outline" onClick={() => { void runRollback() }} disabled={updating || saving}>
+                  回滚上一版本
+                </Button>
+              </div>
+            )}
           </footer>
         )}
       </section>
@@ -772,6 +1215,11 @@ interface SkillNotice {
   skipped?: Array<{ name: string; reason: string }>
   writtenTo?: string
   gitOutput?: string
+  /** Set by the per-skill update flow when the source head was unchanged. */
+  unchanged?: boolean
+  /** Skill name for the unchanged notice. */
+  unchangedName?: string
+  sha?: string
 }
 
 function SkillsSection(props: {
@@ -781,11 +1229,13 @@ function SkillsSection(props: {
   query: string
   installSkill: WorkbenchInjected['installSkill']
   importSkill: WorkbenchInjected['importSkill']
+  updateSkill: WorkbenchInjected['updateSkill']
+  loadSkillSource: WorkbenchInjected['loadSkillSource']
   onUse: (name: string) => void
   onRemove: (name: string) => void
   onReload: () => void
 }) {
-  const { skills, skillsLoading, query, installSkill, importSkill, onUse, onRemove, onReload } = props
+  const { skills, skillsLoading, query, installSkill, importSkill, updateSkill, loadSkillSource, onUse, onRemove, onReload } = props
   const [showForm, setShowForm] = useState(false)
   const [mode, setMode] = useState<SkillFormMode>('inline')
   const [inlineDraft, setInlineDraft] = useState<SkillInlineDraft>(emptyInlineDraft)
@@ -793,6 +1243,11 @@ function SkillsSection(props: {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<SkillNotice | null>(null)
+  /** Name of the skill currently running 检查更新 (P3-21). */
+  const [updatingSkill, setUpdatingSkill] = useState<string | null>(null)
+  /** Open panel editor state (P3-23): the skill being edited + its raw body. */
+  const [editSkill, setEditSkill] = useState<{ name: string; content: string } | null>(null)
+  const [loadingSource, setLoadingSource] = useState(false)
 
   const filtered = (skills?.skills ?? []).filter(s =>
     query === ''
@@ -808,6 +1263,69 @@ function SkillsSection(props: {
     ? 0
     : notice.installed.filter(name => catalogNames.has(name)).length
   const allNoticedInCatalog = notice !== null && noticedCount === notice.installed.length
+
+  /** Per-skill "检查更新" (roadmap P3-21): re-clone the origin, apply changes. */
+  const submitSkillUpdate = async (name: string): Promise<void> => {
+    setUpdatingSkill(name)
+    setError(null)
+    try {
+      const result = await updateSkill(name)
+      if (result.changed === true) {
+        setNotice({
+          installed: result.installed !== undefined && result.installed.length > 0 ? result.installed : [name],
+          ...(result.sha !== undefined ? { sha: result.sha } : {}),
+        })
+      } else {
+        setNotice({ installed: [], unchanged: true, unchangedName: name, ...(result.sha !== undefined ? { sha: result.sha } : {}) })
+      }
+      onReload()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setUpdatingSkill(null)
+    }
+  }
+
+  /** Open the panel editor with a managed skill's raw body (roadmap P3-23). */
+  const startEditSkill = async (name: string): Promise<void> => {
+    setLoadingSource(true)
+    setError(null)
+    try {
+      const source = await loadSkillSource(name)
+      if (source.ok === true && source.content !== undefined) {
+        setEditSkill({ name, content: source.content })
+        setShowForm(false)
+      } else {
+        setError(source.error ?? `读取「${name}」失败`)
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setLoadingSource(false)
+    }
+  }
+
+  /** Save the panel editor back through the install route (overwrites in place). */
+  const submitSkillEdit = async (): Promise<void> => {
+    if (editSkill === null) return
+    if (editSkill.content.trim() === '') {
+      setError('技能正文不能为空')
+      return
+    }
+    setBusy(true)
+    setError(null)
+    try {
+      await installSkill({ name: editSkill.name, content: editSkill.content })
+      setNotice({ installed: [editSkill.name] })
+      setEditSkill(null)
+      onReload()
+    } catch (err) {
+      // Keep the editor open on failure so the user can retry without retyping.
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(false)
+    }
+  }
 
   const submitInline = async (): Promise<void> => {
     const name = inlineDraft.name.trim()
@@ -986,13 +1504,41 @@ function SkillsSection(props: {
         </div>
       )}
 
+      {editSkill !== null && (
+        <div className={css.skillsForm}>
+          <div className={css.checkHead}>
+            <span>
+              编辑技能「{editSkill.name}」<span className={css.checkMeta}>（保存后原文件被覆盖；YAML frontmatter 一并编辑）</span>
+            </span>
+            <span className={css.spacer} />
+            <Button size="sm" className={css.dismiss} onClick={() => { setEditSkill(null) }} aria-label="关闭编辑器" disabled={busy}>✕</Button>
+          </div>
+          <textarea
+            className={css.skillsTextarea}
+            placeholder="SKILL.md 全文（含 frontmatter）"
+            value={editSkill.content}
+            onChange={event => { setEditSkill(prev => prev === null ? prev : { ...prev, content: event.target.value }) }}
+            rows={16}
+            disabled={busy}
+          />
+          <div className={css.formActions}>
+            <Button size="sm" variant="primary" onClick={() => { void submitSkillEdit() }} disabled={busy}>
+              {busy ? '保存中…' : '保存覆盖'}
+            </Button>
+            <Button size="sm" onClick={() => { setEditSkill(null) }} disabled={busy}>取消</Button>
+          </div>
+        </div>
+      )}
+
       {notice !== null && (
         <div className={css.skillsSuccess} role="status">
           <div className={css.skillsSuccessHead}>
             <p className={css.skillsSuccessTitle}>
-              ✓ {notice.installed.length === 1
-                ? `技能「${notice.installed[0]}」已${allNoticedInCatalog ? '安装并挂载' : '写入磁盘'}`
-                : `已批量导入 ${notice.installed.length} 个技能${allNoticedInCatalog ? '，全部已挂载' : `（其中 ${noticedCount} 个已挂载）`}`}
+              ✓ {notice.unchanged === true
+                ? `「${notice.unchangedName}」已是最新${notice.sha !== undefined ? `（${notice.sha}）` : ''}`
+                : notice.installed.length === 1
+                  ? `技能「${notice.installed[0]}」已${allNoticedInCatalog ? '安装并挂载' : '写入磁盘'}`
+                  : `已批量导入 ${notice.installed.length} 个技能${allNoticedInCatalog ? '，全部已挂载' : `（其中 ${noticedCount} 个已挂载）`}`}
             </p>
             <Button
               size="sm"
@@ -1057,9 +1603,37 @@ function SkillsSection(props: {
             {skill.whenToUse !== undefined && skill.whenToUse !== '' && (
               <p className={css.itemDesc}><em>用途：</em>{skill.whenToUse}</p>
             )}
+            {skill.origin !== undefined && (
+              <p className={css.checkMeta} title={skill.origin.sourceUrl ?? '手写技能'}>
+                来源：{skill.origin.sourceUrl ?? '手写'}
+                {skill.origin.sha !== undefined ? ` @ ${skill.origin.sha}` : ''}
+                {` · ${skill.origin.installedAt.slice(0, 10)}`}
+              </p>
+            )}
             <div className={css.itemActions}>
               <Button size="sm" variant="outline" onClick={() => { onUse(skill.name) }}>使用</Button>
-
+              {skill.removable && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => { void startEditSkill(skill.name) }}
+                  disabled={loadingSource || updatingSkill !== null}
+                  title="在工作台内编辑该技能的 SKILL.md 全文"
+                >
+                  {loadingSource === true ? '读取中…' : '编辑'}
+                </Button>
+              )}
+              {skill.origin?.sourceUrl !== undefined && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => { void submitSkillUpdate(skill.name) }}
+                  disabled={updatingSkill !== null}
+                  title="重新克隆来源仓库并应用新提交"
+                >
+                  {updatingSkill === skill.name ? '检查中…' : '检查更新'}
+                </Button>
+              )}
             </div>
           </div>
         ))}

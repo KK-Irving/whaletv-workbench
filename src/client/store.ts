@@ -5,7 +5,9 @@
  * both surfaces read and mutate the same live instance.
  */
 import { defineStore, type EngineStoreHandle } from '@deepseek-ai/dsh-client-store'
-import type { WorkbenchSkillList, WorkbenchState } from '../shared.ts'
+import type {
+  WorkbenchSkillList, WorkbenchState, WorkbenchUpdateCheckResult, WorkbenchUpdateHistoryEntry,
+} from '../shared.ts'
 
 /** Workbench store state. */
 export type WorkbenchStoreState = {
@@ -27,6 +29,12 @@ export type WorkbenchStoreState = {
   skills: WorkbenchSkillList | null
   /** True while the skills catalog is being refreshed. */
   skillsLoading: boolean
+  /** True while the update checker is fetching the remote. */
+  checking: boolean
+  /** Last "检查更新" outcome; null until the first check in this panel life. */
+  checkResult: WorkbenchUpdateCheckResult | null
+  /** Rolling update-attempt log (newest first); null until first load. */
+  updateHistory: WorkbenchUpdateHistoryEntry[] | null
 }
 
 /** Workbench store actions (draft mutators). */
@@ -41,6 +49,9 @@ export type WorkbenchStoreActions = {
   setLastResult: (d: WorkbenchStoreState, result: string | null) => void
   setSkills: (d: WorkbenchStoreState, skills: WorkbenchSkillList | null) => void
   setSkillsLoading: (d: WorkbenchStoreState, loading: boolean) => void
+  setChecking: (d: WorkbenchStoreState, checking: boolean) => void
+  setCheckResult: (d: WorkbenchStoreState, result: WorkbenchUpdateCheckResult | null) => void
+  setUpdateHistory: (d: WorkbenchStoreState, entries: WorkbenchUpdateHistoryEntry[] | null) => void
 }
 
 /**
@@ -59,6 +70,9 @@ export function createWorkbenchStore(): EngineStoreHandle<WorkbenchStoreState, W
       lastResult: null,
       skills: null,
       skillsLoading: false,
+      checking: false,
+      checkResult: null,
+      updateHistory: null,
     }),
     actions: {
       setOpen: (d, open: boolean) => { d.open = open },
@@ -70,7 +84,10 @@ export function createWorkbenchStore(): EngineStoreHandle<WorkbenchStoreState, W
       setUpdateLog: (d, log: string) => { d.updateLog = log },
       setLastResult: (d, result: string | null) => { d.lastResult = result },
       setSkills: (d, skills: WorkbenchSkillList | null) => { d.skills = skills },
-      setSkillsLoading: (d, loading: boolean) => { d.skillsLoading = loading },
+      setSkillsLoading: (d, skillsLoading: boolean) => { d.skillsLoading = skillsLoading },
+      setChecking: (d, checking: boolean) => { d.checking = checking },
+      setCheckResult: (d, checkResult: WorkbenchUpdateCheckResult | null) => { d.checkResult = checkResult },
+      setUpdateHistory: (d, updateHistory: WorkbenchUpdateHistoryEntry[] | null) => { d.updateHistory = updateHistory },
     },
   })
 }

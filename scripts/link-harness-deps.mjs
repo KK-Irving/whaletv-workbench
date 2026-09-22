@@ -93,11 +93,7 @@ function resolveSource(name) {
   return checkoutIndex.get(name)
 }
 
-function linkFallback() {
-  if (!existsSync(FALLBACK)) {
-    console.warn(`link-harness: ${FALLBACK} 不存在 —— 请先运行一次 dsh web（或 dsh plugin）让启动器生成平铺回退目录。`)
-    return
-  }
+function linkPeers() {
   if (existsSync(join(HARNESS_ROOT, 'package.json'))) indexCheckout(HARNESS_ROOT)
   const counts = { linked: 0, kept: 0, real: 0, pruned: 0, unresolved: [] }
   const linkOne = (link, name, required) => {
@@ -116,22 +112,27 @@ function linkFallback() {
     else if (outcome === 'kept') counts.kept += 1
     else if (outcome === 'skipped-real-dir') counts.real += 1
   }
-  for (const entry of readdirSync(FALLBACK)) {
-    const target = join(FALLBACK, entry)
-    if (!existsSync(target)) continue
-    if (entry.startsWith('@')) {
-      for (const pkg of readdirSync(target)) {
-        linkOne(join(ROOT, 'node_modules', entry, pkg), `${entry}/${pkg}`, false)
+  // Mirror pass: only meaningful when the dsh flat fallback exists. On a
+  // machine that never ran dsh (fresh clone, CI) the checkout pass below is
+  // the sole source, so a missing FALLBACK must not skip the declared peers.
+  if (existsSync(FALLBACK)) {
+    for (const entry of readdirSync(FALLBACK)) {
+      const target = join(FALLBACK, entry)
+      if (!existsSync(target)) continue
+      if (entry.startsWith('@')) {
+        for (const pkg of readdirSync(target)) {
+          linkOne(join(ROOT, 'node_modules', entry, pkg), `${entry}/${pkg}`, false)
+        }
+      } else {
+        linkOne(join(ROOT, 'node_modules', entry), entry, false)
       }
-    } else {
-      linkOne(join(ROOT, 'node_modules', entry), entry, false)
     }
   }
   // The fallback mirrors only the current installation generation: packages
   // dsh still ships but the running boot never linked (fresh renames, or the
   // launcher predating them) would be missed by the pass above. Declare the
   // needed set from this project's peerDependencies and make sure each one
-  // resolves.
+  // resolves — from the fallback when present, else from the harness checkout.
   const manifest = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'))
   for (const name of Object.keys(manifest.peerDependencies ?? {})) {
     if (!name.startsWith('@deepseek-ai/')) continue
@@ -143,4 +144,4 @@ function linkFallback() {
   }
 }
 
-linkFallback()
+linkPeers()

@@ -69,12 +69,143 @@ export interface WorkbenchUpdateResult {
   before?: string
   after?: string
   output?: string
+  /**
+   * True only when host-side inputs changed in the pulled range
+   * (src/index.ts / tsdown.config.ts / package.json) — i.e. the running dsh
+   * process still serves the old Host module. Client-only updates hot-inject
+   * and leave this false.
+   */
   needRestart?: boolean
   error?: string
 }
 
+/** One incoming commit listed by GET /whaletv/workbench/update/check. */
+export interface WorkbenchUpdateCheckCommit {
+  /** Short SHA. */
+  sha: string
+  /** First line of the commit message. */
+  subject: string
+}
+
+/** GET /whaletv/workbench/update/check response (roadmap P1-8). */
+export interface WorkbenchUpdateCheckResult {
+  ok: boolean
+  /** Local branch name ('HEAD' when detached). */
+  branch?: string
+  /** Resolved upstream short name (e.g. origin/main) used for the comparison. */
+  upstream?: string
+  /** True when the upstream has nothing new (behind === 0). */
+  upToDate: boolean
+  /** Commits the upstream has that HEAD lacks. */
+  behind?: number
+  /** Commits HEAD has that the upstream lacks (local-only work). */
+  ahead?: number
+  /** Short SHA of the upstream head, present when behind > 0. */
+  remoteHead?: string
+  /** Newest incoming commits, newest first, capped at 20. */
+  commits?: WorkbenchUpdateCheckCommit[]
+  /** True when remoteHead equals the user's skipped-head marker. */
+  skipped?: boolean
+  error?: string
+}
+
+/** One persisted self-update attempt (newest first on the wire). */
+export interface WorkbenchUpdateHistoryEntry {
+  /** ISO-8601 timestamp of when the pipeline finished. */
+  time: string
+  ok: boolean
+  changed?: boolean
+  rebuilt?: boolean
+  needRestart?: boolean
+  before?: string
+  after?: string
+  error?: string
+}
+
+/** GET /whaletv/workbench/update/history response (roadmap P1-9). */
+export interface WorkbenchUpdateHistory {
+  ok: boolean
+  entries: WorkbenchUpdateHistoryEntry[]
+  error?: string
+}
+
+/** POST /whaletv/workbench/update/skip payload (roadmap P1-10). */
+export interface WorkbenchUpdateSkipRequest {
+  /** Short or full SHA of the upstream head to stop being reminded about. */
+  sha: string
+}
+
+/** POST /whaletv/workbench/update/skip response. */
+export interface WorkbenchUpdateSkipResult {
+  ok: boolean
+  skippedHead?: string
+  error?: string
+}
+
+/** POST /whaletv/workbench/update/rollback response (roadmap P1-9). */
+export interface WorkbenchUpdateRollbackResult {
+  ok: boolean
+  /** Short SHA the working tree was reset to. */
+  revertedTo?: string
+  output?: string
+  /** Always true after a successful rollback: the Host module reverted too. */
+  needRestart?: boolean
+  error?: string
+}
+
+/** One entry's launch record (roadmap P2-12). */
+export interface WorkbenchUsageRecord {
+  count: number
+  lastUsed: string
+}
+
+/** GET /whaletv/workbench/usage response. */
+export interface WorkbenchUsage {
+  ok: boolean
+  usage: Record<string, WorkbenchUsageRecord>
+}
+
+/** POST /whaletv/workbench/usage/record response. */
+export interface WorkbenchUsageRecordResult {
+  ok: boolean
+  error?: string
+}
+
+/** One entry's reachability outcome (roadmap P2-16). */
+export interface WorkbenchHealthEntry {
+  ok: boolean
+  detail?: string
+}
+
+/** GET /whaletv/workbench/health response. */
+export interface WorkbenchHealth {
+  ok: boolean
+  results: Record<string, WorkbenchHealthEntry>
+  error?: string
+}
+
 /**
- * Wire projection of one skill summary from `ctx.skills.list()`. Model-facing
+ * Versioning record for one workbench-installed skill (roadmap P3-20).
+ * Persisted at `$DSH_HOME/whaletv-workbench/installed-skills.json` — a plain
+ * Host-owned JSON document rather than a settings field, so the schema stays
+ * flat and old user layers never need migrating.
+ */
+export interface WorkbenchInstalledSkill {
+  /** Kebab-case skill name (the on-disk identity). */
+  name: string
+  /** Source repo URL for Git imports; absent for hand-written skills. */
+  sourceUrl?: string
+  /** Short SHA of the source commit the install came from. */
+  sha?: string
+  /** Repo sub-path this skill was installed from (batch children get their own). */
+  subPath?: string
+  /** Ref (branch/tag) recorded at import time, when given. */
+  ref?: string
+  /** ISO-8601 install timestamp. */
+  installedAt: string
+}
+
+/** Wire projection of one skill summary from `ctx.skills.list()`. Model-facing
  * body / paths omitted (see `SkillSummary` in dsh-skill).
  */
 export interface WorkbenchSkillSummary {
@@ -85,6 +216,8 @@ export interface WorkbenchSkillSummary {
   provider: string
   /** Whether this skill was installed by this workbench (i.e., safe to remove). */
   removable: boolean
+  /** Versioning record for workbench-installed skills with a known origin. */
+  origin?: WorkbenchInstalledSkill
 }
 
 /** GET /whaletv/workbench/skills response. */
@@ -164,6 +297,35 @@ export interface WorkbenchSkillRemoveRequest {
 /** POST /whaletv/workbench/skills/remove response. */
 export interface WorkbenchSkillRemoveResult {
   ok: boolean
+  error?: string
+}
+
+/** POST /whaletv/workbench/skills/update payload (roadmap P3-21). */
+export interface WorkbenchSkillUpdateRequest {
+  /** Installed skill name; must have a Git origin in the versioning records. */
+  name: string
+}
+
+/** POST /whaletv/workbench/skills/update response (roadmap P3-21). */
+export interface WorkbenchSkillUpdateResult {
+  ok: boolean
+  /** True when the source head differs from the recorded SHA (and was applied). */
+  changed?: boolean
+  /** Short SHA of the source head after the check/update. */
+  sha?: string
+  /** Names re-installed when a change was applied. */
+  installed?: string[]
+  error?: string
+}
+
+/** GET /whaletv/workbench/skills/source?name=<name> response (roadmap P3-23). */
+export interface WorkbenchSkillSourceResult {
+  ok: boolean
+  name?: string
+  /** Absolute path of the SKILL.md / *.md that was read. */
+  path?: string
+  /** Raw file body (frontmatter included). */
+  content?: string
   error?: string
 }
 

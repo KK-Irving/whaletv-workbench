@@ -1,6 +1,7 @@
 /**
- * whaletv-workbench settings card, registered into
- * `settings.plugin.item` under the `whaletv-workbench` namespace.
+ * whaletv-workbench settings card, registered into the Plugins settings
+ * section's `settings.plugins.tab` list slot (dsh ≥ 0.1.6; the pre-0.1.6
+ * keyed `settings.plugin.item` card seam was removed upstream).
  *
  * A namespaced settings scope from `ctx.settingsScope.bind({namespace})` is
  * this card's read/write channel. Snapshot fields:

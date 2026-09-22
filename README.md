@@ -20,7 +20,7 @@ WhaleTV 工作台 —— DeepSeek Harness（`dsh`）的站外 Web 插件：把�
     - **从 Git 仓库导入**：URL + 可选 ref + 可选子路径 → 浅克隆到 staging → 自动识别三种形态：**bundle**（含 SKILL.md 的目录，连同 assets 一起复制）/ **flat**（单 `.md`）/ **batch**（parent 目录下多个 `<child>/SKILL.md`，一次装全）。
   - **删除**：只允许工作台自己写入 `$DSH_HOME/skills/` 的技能。项目/agent/内置技能保持只读。
   - **诊断**：`GET /whaletv/workbench/skills/debug` 返回本地 `$DSH_HOME/skills` 路径、目录内容、相关环境变量、dsh 官方注册表 snapshot——用来定位"文件在盘上但面板看不到"的问题。
-- **Settings 卡片**（`settings.plugin.item` slot）：dsh Web 设置页 → Plugins 标签下自动出现「WhaleTV 工作台」卡片，编辑 `gitRemote` / `customSkillDirs` 等偏好，走标准的 `ctx.settings` 命名空间（`whaletv-workbench`），支持带 revision 的乐观并发写。
+- **Settings 卡片**（`settings.plugins.tab` slot）：dsh Web 设置页 → Plugins 分区下自动出现「WhaleTV 工作台」标签页（dsh ≥ 0.1.6 的 feature-owned tab 机制；旧版 keyed `settings.plugin.item` 卡片缝已在上游移除），编辑 `gitRemote` / `customSkillDirs` 等偏好，走标准的 `ctx.settings` 命名空间（`whaletv-workbench`），支持带 revision 的乐观并发写。
 - **一键更新**：面板顶部「更新」按钮执行 `git pull --ff-only` → （有更新时）`pnpm install` + 重建 client bundle → 通过 `clientModules.rebuilt` 热注入，开发模式下浏览器自动刷新；涉及服务端改动时提示重启 dsh。更新日志完整展示在面板底部。
 - **工作台图标**：`assets/workbench.svg`（品牌红面板网格）构建时内嵌为 SVG data URL，矢量缩放不因压缩模糊，用于入口图标与面板头部（`scripts/gen-icon.mjs`）。
 
@@ -162,7 +162,7 @@ node scripts/install-profile.mjs web
 
 ## 版本
 
-当前版本 **v0.5.1**（对齐 dsh 0.1.2-alpha.3）。每次发版的变更详见 [CHANGELOG.md](./CHANGELOG.md)。面板顶部会显示实际运行的版本号（读自 `package.json`），跟这里对齐即可。
+当前版本 **v0.7.0**（对齐 dsh 0.1.6-alpha.2）。每次发版的变更详见 [CHANGELOG.md](./CHANGELOG.md)。面板顶部会显示实际运行的版本号（读自 `package.json`），跟这里对齐即可（`pnpm run check:version` 会在冒烟链里校验三处一致）。
 
 ## License
 

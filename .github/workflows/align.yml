@@ -1,0 +1,63 @@
+# dsh alignment check: typecheck the plugin against a real harness checkout.
+#
+# The 0.4 → 0.5 cycle proved that upstream removals can ship while
+# `pnpm run smoke` stays green (the smoke mocks the contract). This weekly
+# job is the drift alarm: clone deepseek-harness into the sibling directory
+# scripts/link-harness-deps.mjs knows about, build its lib faces (the d.ts
+# trees), link the peers, then run the FULL gate (tsc + smoke).
+#
+# windows-latest on purpose: link-harness-deps creates NTFS junctions, which
+# is also how every dev machine runs it.
+name: dsh alignment
+
+on:
+  schedule:
+    # Weekly, Monday 03:00 UTC — catch upstream breakage before users do.
+    - cron: '0 3 * * 1'
+  workflow_dispatch:
+
+jobs:
+  typecheck:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: whaletv-workbench
+
+      - name: Checkout deepseek-harness (sibling checkout)
+        uses: actions/checkout@v4
+        with:
+          repository: deepseek-ai/deepseek-harness
+          ref: main
+          path: deepseek-harness
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - name: Build harness lib faces (emits the d.ts this plugin typechecks against)
+        working-directory: deepseek-harness
+        run: |
+          pnpm install --no-frozen-lockfile
+          pnpm run build:lib
+
+      - name: Link harness peers into the plugin
+        working-directory: whaletv-workbench
+        env:
+          DSH_HARNESS_ROOT: ${{ github.workspace }}\deepseek-harness
+        run: |
+          pnpm install --no-frozen-lockfile
+          node scripts/link-harness-deps.mjs
+
+      - name: Typecheck against harness HEAD
+        working-directory: whaletv-workbench
+        run: pnpm run check:types
+
+      - name: Full smoke (version + types + three contract smokes)
+        working-directory: whaletv-workbench
+        run: pnpm run smoke
