@@ -54,8 +54,6 @@ import type {} from '@deepseek-ai/dsh-client-modules'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 // Type-only: ctx.agents context merge.
 import type {} from '@deepseek-ai/dsh-agent'
-// Type-only: ctx.settings (SettingsProvider.installSection/update) context merge.
-import type {} from '@deepseek-ai/dsh-settings'
 // ctx.skills context merge + value imports for the workbench-owned provider.
 import type {
   SkillCandidate, SkillDefinition, SkillLookupOptions, SkillProviderControl,
@@ -80,43 +78,42 @@ export const name = 'whaletv-workbench'
 /**
  * User-owned preferences layered on top of any composition entry and schema
  * defaults. Kept small on purpose: the entry registry (groups/items) is a
- * separate JSON document editable in-panel, not a settings section — the
- * settings seam is for scalar prefs a form can render.
+ * separate JSON document editable in-panel, and the plugin's bookkeeping
+ * (installed skills, skipped update heads) lives in its own Host-owned JSON
+ * documents under $DSH_HOME/whaletv-workbench — NOT in this Config.
+ *
+ * dsh ≥ 0.1.7 projects this schema straight into the Plugins settings page
+ * (`SettingsForms.describe`), so the two scalar prefs are declared
+ * `.volatile()` — that is what makes them live-editable in the generated
+ * form without remounting the plugin.
  */
 export interface Config {
   /** Optional git remote URL used by the self-update route; empty relies on `git remote get-url origin`. */
   gitRemote: string
   /** Extra roots the workbench-installed skill directory sits alongside; consumed by future skill provider work. */
   customSkillDirs: string[]
-  /** Kebab-case names of skills this workbench installed (and can safely remove). Managed by the install/remove routes. */
+  /** @deprecated 0.7.1 — bookkeeping moved to installed-skills.json; kept so stored user layers still validate. */
   installedSkills: string[]
-  /** Upstream head SHA the user chose to skip in the update checker; a later remote head re-arms the reminder. */
+  /** @deprecated 0.7.1 — bookkeeping moved to update-state.json; kept so stored user layers still validate. */
   skippedHead: string
 }
 
-export const Config: z<Config> = z.object({
-  gitRemote: z.string().default(''),
-  customSkillDirs: z.array(z.string()).default([]),
+export const Config = z.object({
+  gitRemote: z.string().default('').volatile(),
+  customSkillDirs: z.array(z.string()).default([]).volatile(),
+  /* Bookkeeping below stays NON-volatile on purpose: nothing may edit it
+   * through the settings surface — the write routes own these fields. */
   installedSkills: z.array(z.string()).default([]),
   skippedHead: z.string().default(''),
 })
 
 /**
- * Settings namespace: the join key between the Host register and the browser
- * card. dsh ≥ 0.1.2 validates namespaces at runtime (lowercase hyphenated
- * identifier) and at the type level, so the plain literal replaces the old
- * `settingsNamespace(...)` helper (removed upstream).
- */
-const WORKBENCH_NAMESPACE = 'whaletv-workbench'
-
-/**
- * Host services this plugin uses through ctx.
- *
- * `settings` is declared here even though `SettingsProvider.installSection`
- * attaches its namespace through the calling fiber — the skill install /
- * import / remove routes reach into `ctx.settings.update(...)` to keep the
- * `installedSkills` registry in sync, and without this declaration Cordis
- * rejects the read with "cannot get property settings without inject".
+ * Host services this plugin uses through ctx. `settings` (dsh SettingsForms
+ * on ≥ 0.1.7) is used once in apply() to turn off the auto-generated config
+ * page; the plugin's own bookkeeping lives in its JSON state documents
+ * instead of the settings document. The settings namespace is this plugin's
+ * profile entry id (`whaletv-workbench`, see cordis.patch.yml) — referenced
+ * by the generated page, not by this code.
  */
 export const inject = ['webServer', 'clientModules', 'skills', 'agents', 'settings']
 
@@ -243,6 +240,13 @@ const MAX_USAGE_ENTRIES = 500
  * settings schema stays flat and old user layers never need migrating.
  */
 const INSTALLED_RECORDS_PATH = join(WORKBENCH_STATE_DIR, 'installed-skills.json')
+/**
+ * Small update-checker state (roadmap P1-10): the skipped upstream head.
+ * Host-owned JSON for the same reason as installed-skills.json — the 0.1.7
+ * settings document is schema-projected from Config and is no place for
+ * runtime bookkeeping.
+ */
+const UPDATE_STATE_PATH = join(WORKBENCH_STATE_DIR, 'update-state.json')
 /** Per-probe timeout for the reachability checker (roadmap P2-16). */
 const HEALTH_TIMEOUT_MS = 5_000
 /** Favicon cache (roadmap P2-17): per-origin icons under the state dir. */
@@ -759,17 +763,35 @@ async function runUpdateRollback(ctx: Context): Promise<WorkbenchUpdateRollbackR
   }
 }
 
+/** Read the skipped-head marker (roadmap P1-10); missing file is empty. */
+function readSkippedHead(): string {
+  try {
+    const parsed = JSON.parse(readFileSync(UPDATE_STATE_PATH, 'utf8')) as unknown
+    const marker = (parsed as { skippedHead?: unknown } | null)?.skippedHead
+    return typeof marker === 'string' ? marker : ''
+  } catch {
+    return ''
+  }
+}
+
+/** Persist the skipped-head marker atomically; best-effort. */
+function writeSkippedHead(sha: string): void {
+  try {
+    mkdirSync(WORKBENCH_STATE_DIR, { recursive: true })
+    const tmp = `${UPDATE_STATE_PATH}.${process.pid}.${Date.now()}.tmp`
+    writeFileSync(tmp, `${JSON.stringify({ skippedHead: sha }, null, 2)}\n`, 'utf8')
+    renameSync(tmp, UPDATE_STATE_PATH)
+  } catch {
+    // Losing the skip marker only re-arms a reminder — never fail the flow.
+  }
+}
+
 /**
  * Clear the skip marker after a successful update moved to a new head — the
  * reminder re-arms for whatever comes next. Best-effort; never throws.
  */
-async function clearSkippedHead(ctx: Context): Promise<void> {
-  try {
-    const settings = ctx.get('settings')
-    if (settings) await settings.update(WORKBENCH_NAMESPACE, { skippedHead: '' })
-  } catch (settingsError) {
-    ctx.logger?.warn?.(`whaletv-workbench: skippedHead reset skipped: ${settingsError}`)
-  }
+function clearSkippedHead(): void {
+  writeSkippedHead('')
 }
 
 interface UsageRecord {
@@ -1011,11 +1033,10 @@ async function buildSkillDebug(ctx: Context): Promise<Record<string, unknown>> {
  * hand under our root. Skills from project/agent/bundled sources are read-only.
  */
 async function buildSkillList(
-  ctx: Context, installed: readonly string[], records: readonly WorkbenchInstalledSkill[],
+  ctx: Context, records: readonly WorkbenchInstalledSkill[],
 ): Promise<WorkbenchSkillList> {
   try {
     const snap = await ctx.skills.snapshot({})
-    const installedSet = new Set(installed)
     const recordByName = new Map(records.map(record => [record.name, record]))
     const skills: WorkbenchSkillSummary[] = snap.skills.map(s => ({
       name: s.name,
@@ -1023,9 +1044,10 @@ async function buildSkillList(
       ...(s.whenToUse !== undefined ? { whenToUse: s.whenToUse } : {}),
       source: s.source,
       provider: s.provider,
-      // Removable only when this workbench wrote it OR it landed under our
-      // user-dsh root (safe to delete without touching project/agent roots).
-      removable: installedSet.has(s.name) || findManagedSkillPath(s.name) !== undefined,
+      // Removable when this workbench owns a versioning record for it OR it
+      // landed under our user-dsh root (safe to delete without touching
+      // project/agent roots).
+      removable: recordByName.has(s.name) || findManagedSkillPath(s.name) !== undefined,
       ...(recordByName.has(s.name) ? { origin: recordByName.get(s.name) } : {}),
     }))
     return { ok: true, skills, complete: snap.complete }
@@ -1552,19 +1574,21 @@ export function apply(ctx: Context, config: Config): void {
   // Windows where fs.rmSync lost the race to a still-open git.exe handle).
   sweepStagingDir()
 
-  // Live source thunk: `installSection` swaps this to read from the
-  // settings scope once one is attached. Everything Host-side that needs the
-  // current value goes through `source()`, so live edits flow immediately.
-  let source: () => Config = () => config
-
-  // dsh ≥ 0.1.2: the standalone `installSettingsSection` helper was folded
-  // into the settings service as `SettingsProvider.installSection(owner, ns,
-  // schema, entry, hooks)` — same layering (entry = composition base), same
-  // hooks shape ({ setSource, onChange }).
-  ctx.settings.installSection(ctx, WORKBENCH_NAMESPACE, Config, config, {
-    setSource: (current) => { source = current },
-    onChange: () => { /* live-applied fields; nothing derived to invalidate today. */ },
-  })
+  // dsh ≥ 0.1.7 projects the plugin's Config schema into the Plugins
+  // settings page automatically. The two scalar prefs are declared volatile,
+  // so the generated form edits them live; suppress the AUTO page because
+  // this plugin ships none of the host-plane pages it would duplicate.
+  //
+  // Reached STRUCTURALLY (optional-chained) instead of through the
+  // `dsh-settings` Context merge: that seam changed in every release from
+  // 0.1.4 → 0.1.7, and this file deliberately carries no dsh-settings type
+  // dependency. On older dsh (no configure) this degrades to a no-op.
+  const settingsForms = (ctx as { settings?: { configure?: (presentation: { auto?: boolean }) => () => void } }).settings
+  try {
+    settingsForms?.configure?.({ auto: false })
+  } catch {
+    /* older settings service without configure: nothing to do. */
+  }
 
   // Register a workbench-owned SkillProvider so the "工作台技能" panel
   // sees the files we write even when dsh-skill-filesystem doesn't (missing
@@ -1632,7 +1656,7 @@ export function apply(ctx: Context, config: Config): void {
           void runUpdate(ctx).then(
             result => {
               // A successful move invalidates any "skip this version" marker.
-              if (result.ok && result.changed === true) void clearSkippedHead(ctx)
+              if (result.ok && result.changed === true) clearSkippedHead()
               sendJson(res, result.ok ? 200 : 500, result)
             },
             (error: unknown) => { sendJson(res, 500, { ok: false, error: String(error) }) },
@@ -1643,7 +1667,7 @@ export function apply(ctx: Context, config: Config): void {
         // GET /update/check — fetch + ahead/behind + incoming commit list,
         // no working-tree changes (roadmap P1-8).
         if (sub === '/update/check' && (method === undefined || method === 'GET' || method === 'HEAD')) {
-          void runUpdateCheck(source().skippedHead).then(
+          void runUpdateCheck(readSkippedHead()).then(
             result => { sendJson(res, result.ok ? 200 : 500, result) },
             (error: unknown) => { sendJson(res, 500, { ok: false, upToDate: false, error: String(error) }) },
           )
@@ -1669,8 +1693,7 @@ export function apply(ctx: Context, config: Config): void {
                 const request = raw as WorkbenchUpdateSkipRequest
                 const sha = typeof request.sha === 'string' ? request.sha.trim() : ''
                 if (!SHA_PATTERN.test(sha)) throw new Error(`sha 必须是 7-40 位十六进制，收到：${sha || '<空>'}`)
-                const settings = ctx.get('settings')
-                if (settings) await settings.update(WORKBENCH_NAMESPACE, { skippedHead: sha.toLowerCase() })
+                writeSkippedHead(sha.toLowerCase())
                 const result: WorkbenchUpdateSkipResult = { ok: true, skippedHead: sha.toLowerCase() }
                 sendJson(res, 200, result)
               } catch (error) {
@@ -1766,7 +1789,7 @@ export function apply(ctx: Context, config: Config): void {
         // GET /skills — invocation-neutral catalog + which entries this
         // workbench can remove.
         if (sub === '/skills' && (method === undefined || method === 'GET' || method === 'HEAD')) {
-          void buildSkillList(ctx, source().installedSkills, readInstalledRecords()).then(
+          void buildSkillList(ctx, readInstalledRecords()).then(
             payload => { sendJson(res, payload.ok ? 200 : 500, payload) },
             (error: unknown) => { sendJson(res, 500, { ok: false, skills: [], complete: false, error: String(error) }) },
           )
@@ -1811,22 +1834,8 @@ export function apply(ctx: Context, config: Config): void {
                   installedAt: new Date().toISOString(),
                 }])
                 skillProvider.invalidate()
-                // Reflect ownership in the settings namespace so a later
-                // `/skills` read marks this skill as removable across restarts.
-                const current = source()
-                if (!current.installedSkills.includes(skillName)) {
-                  try {
-                    const settings = ctx.get('settings')
-                    if (settings) {
-                      await settings.update(WORKBENCH_NAMESPACE, {
-                        installedSkills: [...current.installedSkills, skillName],
-                      })
-                    }
-                  } catch (settingsError) {
-                    // Non-fatal: skill is on disk, ownership tracking is best-effort.
-                    ctx.logger?.warn?.(`whaletv-workbench: settings update skipped: ${settingsError}`)
-                  }
-                }
+                // Ownership across restarts is the installed-skills.json
+                // versioning record above — nothing else to sync.
                 const result: WorkbenchSkillInstallResult = { ok: true, writtenTo }
                 sendJson(res, 200, result)
               } catch (error) {
@@ -1872,21 +1881,8 @@ export function apply(ctx: Context, config: Config): void {
                   ...(typeof request.ref === 'string' && request.ref.trim() !== '' ? { ref: request.ref.trim() } : {}),
                   installedAt,
                 })))
-                // Track ownership across restarts. Batch install may return
-                // multiple names — union them all into installedSkills.
-                const current = source()
-                const merged = Array.from(new Set([...current.installedSkills, ...outcome.installed]))
-                if (merged.length !== current.installedSkills.length) {
-                  try {
-                    const settings = ctx.get('settings')
-                    if (settings) {
-                      await settings.update(WORKBENCH_NAMESPACE, { installedSkills: merged })
-                    }
-                  } catch (settingsError) {
-                    // Non-fatal: skill is on disk, ownership tracking is best-effort.
-                    console.warn(`whaletv-workbench: settings update skipped: ${String(settingsError)}`)
-                  }
-                }
+                // Ownership across restarts is the versioning record — the
+                // old installedSkills settings mirror is gone (0.7.1).
                 const result: WorkbenchSkillImportResult = {
                   ok: true,
                   installed: outcome.installed,
@@ -1924,20 +1920,6 @@ export function apply(ctx: Context, config: Config): void {
                 removeSkillOnDisk(skillName)
                 pruneInstalledRecords([skillName])
                 skillProvider.invalidate()
-                const current = source()
-                if (current.installedSkills.includes(skillName)) {
-                  try {
-                    const settings = ctx.get('settings')
-                    if (settings) {
-                      await settings.update(WORKBENCH_NAMESPACE, {
-                        installedSkills: current.installedSkills.filter(n => n !== skillName),
-                      })
-                    }
-                  } catch (settingsError) {
-                    // Non-fatal: skill is removed from disk, ownership tracking is best-effort.
-                    ctx.logger?.warn?.(`whaletv-workbench: settings update skipped: ${settingsError}`)
-                  }
-                }
                 const result: WorkbenchSkillRemoveResult = { ok: true }
                 sendJson(res, 200, result)
               } catch (error) {

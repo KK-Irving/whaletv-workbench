@@ -9,19 +9,50 @@
  *   - GET  /state (re-read)    → the saved config
  *   - GET  /skills             → 200 with the mocked catalog
  *   - GET  /nonsense           → 404 (sub-path fallthrough)
+ *   - git-import / skip / icon safety boundaries → 400 with readable errors
  *
  * Uses a temp $DSH_HOME so the smoke run never touches the user's real
  * workbench state; the temp dir is removed on exit.
+ *
+ * Self-skip: when the host bundle's runtime deps (yaml + the @deepseek-ai/*
+ * value imports) are not linked — a fresh CI checkout — the script prints a
+ * SKIP marker and exits 0; the dsh-alignment workflow covers the host half
+ * with real deps.
  *
  * Usage: node scripts/smoke-host.mjs   (requires a built lib/index.js)
  */
 import { EventEmitter } from 'node:events'
 import { mkdtempSync, rmSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import os from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
+
+// lib/index.js keeps three bare VALUE imports after bundling (everything
+// else is type-only and erased): `yaml`, `@deepseek-ai/dsh-llm`, and
+// `@deepseek-ai/schemastery`. On dev machines these resolve through the
+// junctions created by scripts/link-harness-deps.mjs; a fresh CI checkout
+// has none of them (@deepseek-ai/* is not on the public npm registry, and
+// autoInstallPeers is off). Detect that case up front and SKIP with an
+// explicit marker instead of failing with ERR_MODULE_NOT_FOUND — the weekly
+// "dsh alignment" workflow (builds + links the harness, then runs the full
+// `pnpm run smoke`) is the authoritative gate for the host half.
+const HOST_RUNTIME_DEPS = ['yaml', '@deepseek-ai/dsh-llm', '@deepseek-ai/schemastery']
+const hostRequire = createRequire(import.meta.url)
+const missingDeps = HOST_RUNTIME_DEPS.filter((name) => {
+  try {
+    hostRequire.resolve(name)
+    return false
+  } catch {
+    return true
+  }
+})
+if (missingDeps.length > 0) {
+  console.log(`smoke-host: SKIP — host runtime deps not linked here (${missingDeps.join(', ')}). Run scripts/link-harness-deps.mjs locally, or rely on the dsh-alignment workflow, to exercise the host half.`)
+  process.exit(0)
+}
 
 const TMP_DSH_HOME = mkdtempSync(join(os.tmpdir(), 'dsh-workbench-smoke-'))
 process.env.DSH_HOME = TMP_DSH_HOME
@@ -33,8 +64,7 @@ try {
   // The inject list is a runtime contract Cordis validates lazily: any
   // property access on `ctx` that isn't declared here throws
   // "cannot get property X without inject" at the first read from a route
-  // handler. Every service the routes touch — including `settings` for the
-  // installedSkills registry updates — must be in this list.
+  // handler. `settings` is touched once in apply() (configure({auto:false})).
   const expectedInject = ['webServer', 'clientModules', 'skills', 'agents', 'settings'].sort()
   const actualInject = [...(mod.inject ?? [])].sort()
   if (actualInject.join(',') !== expectedInject.join(',')) {
@@ -42,9 +72,10 @@ try {
   }
 
   // Mock the subset of Context the Host half touches during apply()
-  // and route handling. `inject(services, cb)` is a cordis primitive
-  // installSettingsSection uses; noop it — the settings namespace has no
-  // route-facing consequences beyond feeding source() with the initial entry.
+  // and route handling. On dsh ≥ 0.1.7 `settings` is the SettingsForms
+  // service; the plugin only calls configure({ auto: false }) once. All
+  // bookkeeping lives in the plugin's own JSON state documents, so a noop
+  // settings mock is enough.
   const registered = []
   const ctx = {
     effect: (cb) => { const dispose = cb(); return typeof dispose === 'function' ? dispose : () => {} },
@@ -69,22 +100,11 @@ try {
       get: () => undefined,
       currentInitiator: () => undefined,
     },
-    // Settings.update is called by the /skills/install and /skills/remove
-    // routes to keep the installed-skills registry in sync; a noop suffices
-    // here — the smoke test does not exercise those write routes.
-    // installSection is the dsh ≥ 0.1.2 settings seam (the standalone
-    // installSettingsSection helper was folded into the service): the mock
-    // accepts the registration and immediately hands back the entry thunk,
-    // which is what feeds source() on the state route.
     settings: {
-      update: async () => {},
-      installSection: (_owner, _ns, _schema, entry, hooks) => {
-        hooks?.setSource?.(() => entry)
-        hooks?.onChange?.()
-      },
+      configure: () => () => {},
     },
   }
-  mod.apply(ctx, { gitRemote: '', customSkillDirs: [], installedSkills: [] })
+  mod.apply(ctx, { gitRemote: '', customSkillDirs: [], installedSkills: [], skippedHead: '' })
 
   if (registered.length !== 1) throw new Error(`expected 1 route registration, got ${registered.length}`)
   const [route] = registered

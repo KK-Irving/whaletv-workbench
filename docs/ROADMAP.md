@@ -3,7 +3,7 @@
 > 生成于 2026-09-03，基于 v0.6.0 代码现状审查 + 对 [dckxx/x-hub](https://github.com/dckxx/x-hub)（v0.6.5）的完整调研。
 > 每完成一项请在对应条目前打 ✅ 并同步更新 [CHANGELOG.md](../CHANGELOG.md) 与 [DESIGN.md](./DESIGN.md) §6 路线表。
 
-## 执行状态（2026-09-03，v0.7.0 发版）
+## 执行状态（2026-09-03，v0.7.1 发版）
 
 **已完成**（全部 `tsc --noEmit` + smoke 绿，bundle 通过）：
 
@@ -15,6 +15,11 @@
 - ✅ **评审调整（2026-09-03 第二轮）**：
   - 检查/更新合并为**单入口两阶段**：头部只留「检查更新」（有更新时变主色），拉取动作收敛到结果 banner 内的「更新」按钮——原两个按钮语义重叠
   - 技能面板内编辑（P3-23 原型）**按评审移除**：误触改坏 SKILL.md 的风险大于收益，普通用户以「删除 + 重装」替代；`GET /skills/source` 路由一并移除，不留死接口
+- ✅ **dsh 0.1.7-alpha.1 对齐（v0.7.1）**：
+  - CI 修复：smoke-host 对 harness-only 运行时依赖（yaml/dsh-llm/schemastery）预检，缺失时显式 SKIP——每周对齐 job 才是 host 半的权威门
+  - settings 缝断裂（installSection→SettingsForms、settingsScope→configForms）以**去依赖**化解：自持状态迁入自有 JSON（update-state.json），偏好字段标 volatile 交给 0.1.7 自动配置页，自研设置卡片退场（SettingsCard 删除、client inject 去掉 settingsScope、peerDeps 去掉 dsh-settings/ui-settings/ui-settings-plugins）
+  - link-harness-deps 逐项容错（单个被锁 junction 不再炸整轮）+ 可修复 0.1.7 profile 自身的悬挂 junction（要求 checkout 已 build lib 面）
+  - 本会话沙箱拒绝 junction 增删 → 补链需在自有终端跑 `pnpm run link:harness`；tsconfig 暂以 paths 指向 checkout 类型兜底（补链成功后删除）
 
 **剩余（后续版本）**：
 

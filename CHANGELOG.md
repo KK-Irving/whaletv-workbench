@@ -2,6 +2,56 @@
 
 Notable changes per version. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) loosely; pre-1.0 minor bumps carry feature-level changes because the API surface is still shaping up.
 
+## 0.7.1 — 2026-09-03
+
+Alignment release for dsh **0.1.7-alpha.1**, plus the CI fix for 0.7.0's
+first GitHub Actions run.
+
+### Fixed
+
+- **CI no longer fails on the host smoke's harness-only imports.** The built
+  `lib/index.js` keeps three bare value imports (`yaml`,
+  `@deepseek-ai/dsh-llm`, `@deepseek-ai/schemastery`) that only resolve
+  through `link-harness-deps` junctions; a fresh CI runner has none, so
+  smoke-host died with ERR_MODULE_NOT_FOUND. It now pre-flights those deps
+  and prints an explicit SKIP marker (exit 0) when they are absent — the
+  weekly dsh-alignment workflow remains the authoritative host-half gate.
+
+### Changed
+
+- **Alignment with the 0.1.7 settings seam — by removing our dependency on
+  it.** 0.1.7 replaced `SettingsProvider.installSection` with `SettingsForms`
+  (a Config-schema projection keyed by profile entry id) and the client
+  `settingsScope` service with `configForms`. Rather than chase both seams a
+  third time, the plugin now:
+  - keeps its own bookkeeping in Host-owned JSON documents
+    (`installed-skills.json` for ownership/versioning — already the case —
+    and a new `update-state.json` for the skipped update head), so the write
+    routes no longer touch the settings document at all;
+  - declares `gitRemote` / `customSkillDirs` as **volatile** Config fields,
+    which dsh ≥ 0.1.7 projects into a live-editable auto-generated Plugins
+    settings page (`ctx.settings.configure({ auto: false })` keeps that as
+    the single surface);
+  - **drops the custom settings card** (`settings.plugins.tab` tab,
+    `SettingsCard`, `settingsScope` inject) — the generated page replaces it.
+- **`link-harness-deps` is resilient per package**: one locked or
+  un-removable junction (running dsh, antivirus) is reported in a failure
+  list instead of crashing the whole repair run.
+- The 0.1.7 profile fallback can itself ship dangling junctions (packages
+  re-pointed into an experimental workspace path that is not installed); the
+  checkout repair pass now heals those too, provided the harness checkout's
+  `lib` faces are built (`pnpm run build:lib` in the checkout — the
+  dsh-alignment workflow does exactly this).
+
+### Migration
+
+- Stored user layers carrying `installedSkills` / `skippedHead` still
+  validate (the fields remain in the schema, deprecated and inert); the live
+  values now live in `installed-skills.json` / `update-state.json`.
+- After pulling this release, run `pnpm run link:harness` once in a normal
+  terminal (it needs junction create/delete rights), and build the harness
+  checkout's client faces if you typecheck against it.
+
 ## 0.7.0 — 2026-09-03
 
 Roadmap execution release: P1 (update experience), the core of P2 (workbench
@@ -63,6 +113,13 @@ capabilities) and P3 (skill versioning), per [ROADMAP.md](./docs/ROADMAP.md).
 
 ### Fixed
 
+- **CI no longer fails on the host smoke's harness-only imports.** The built
+  `lib/index.js` keeps three bare value imports (`yaml`,
+  `@deepseek-ai/dsh-llm`, `@deepseek-ai/schemastery`) that only resolve
+  through `link-harness-deps` junctions; a fresh CI runner has none, so
+  smoke-host died with ERR_MODULE_NOT_FOUND. It now pre-flights those deps
+  and prints an explicit SKIP marker (exit 0) when they are absent — the
+  weekly dsh-alignment workflow remains the authoritative host-half gate.
 - **Install-over-existing no longer erases versioning records**: writing a
   skill that already has an origin record (e.g. reinstalling the same name
   through the inline install form) now preserves the previous

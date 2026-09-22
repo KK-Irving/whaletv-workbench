@@ -2,12 +2,14 @@
  * Apply-level smoke test: materialize the client bundle and run apply()
  * against a mock ClientContext whose slots registry records the registration
  * options. Verifies the slot contract that bit us once:
- *   - injections target exactly the three declared slots
- *     ('sidebar.footer.action', 'shell.overlay', 'settings.plugins.tab')
+ *   - injections target exactly the two declared slots
+ *     ('sidebar.footer.action', 'shell.overlay')
  *   - each register carries name = the declared slot key and a unique id
- *     (all three are `kind: 'list'` — list slots require options.id)
- *   - the sidebar entry and panel share one store handle; the settings tab
- *     registers no store (its data is the settings scope, not the panel's).
+ *     (both are `kind: 'list'` — list slots require options.id)
+ *   - the sidebar entry and panel share one store handle.
+ *
+ * The settings card is gone since 0.7.1: preferences live on the dsh ≥ 0.1.7
+ * auto-generated config page (Host Config schema projection).
  * Usage: node scripts/smoke-apply.mjs
  */
 import { readFileSync } from 'node:fs'
@@ -37,8 +39,7 @@ const slots = {
 const workspaces = undefined
 const uiWorkspace = { startSession: () => {} }
 const remote = { session: { openWorkspacePath: async () => ({ ok: true, value: { opened: true } }) } }
-const settingsScope = { bind: () => ({ getSnapshot: () => ({ status: 'unavailable' }), subscribe: () => () => {}, set: async () => {}, unset: async () => {} }) }
-const ctx = { slots, uiWorkspace, remote, settingsScope }
+const ctx = { slots, uiWorkspace, remote }
 
 const handoffs = []
 globalThis.window = globalThis
@@ -65,16 +66,13 @@ if (handoffs.length !== 1) throw new Error(`expected 1 handoff, got ${handoffs.l
 const exports = handoffs[0].factory(mockRequire)
 exports.apply(ctx)
 
-// sidebar.footer.action, shell.overlay, and settings.plugins.tab are all
-// declared `kind: 'list'` by their owning packages (ui-sidebar, ui-layout,
-// and the Plugins settings section in ui-settings-plugins), so every
-// registration carries `id`. The settings tab seams to its Host settings
-// namespace through the inject face's settingsScope binding instead of a
-// slot option.
+// sidebar.footer.action and shell.overlay are declared `kind: 'list'` by
+// their owning packages (ui-sidebar and ui-layout), so both registrations
+// carry `id`. The plugin's preferences live on the dsh ≥ 0.1.7
+// auto-generated config page — no settings slot here anymore.
 const listExpected = [
   ['sidebar.footer.action', 'whaletv-workbench.sidebar'],
   ['shell.overlay', 'whaletv-workbench.panel'],
-  ['settings.plugins.tab', 'whaletv-workbench'],
 ]
 
 const injectKeys = [...injections].sort()
@@ -88,17 +86,8 @@ for (const [slotName, entryId] of listExpected) {
   if (hit.options.id !== entryId) throw new Error(`entry id for "${slotName}" is "${hit.options.id}", expected "${entryId}"`)
   if (typeof hit.options.inject !== 'function') throw new Error(`registration for "${slotName}" lacks the inject factory`)
 }
-// The two panel registrations share a store handle; the settings tab
-// registers no store (its data source is settingsScope, not the panel).
-const panelHandles = new Set(
-  registrations
-    .filter(r => ['sidebar.footer.action', 'shell.overlay'].includes(r.options.name))
-    .map(r => r.options.store),
-)
-if (panelHandles.size !== 1) throw new Error(`expected one shared store handle for panel slots, got ${panelHandles.size}`)
-const cardHandles = registrations
-  .filter(r => r.options.name === 'settings.plugins.tab')
-  .map(r => r.options.store)
-if (cardHandles.some(h => h !== undefined)) throw new Error('settings.plugins.tab registration should not carry a store')
+// Both registrations share one store handle.
+const panelHandles = new Set(registrations.map(r => r.options.store))
+if (panelHandles.size !== 1) throw new Error(`expected one shared store handle across registrations, got ${panelHandles.size}`)
 
-console.log(`smoke-apply: OK — list slots=[${listExpected.map(([s, id]) => `${s}(id=${id})`).join(', ')}], shared store on panel slots, no store on the settings tab`)
+console.log(`smoke-apply: OK — list slots=[${listExpected.map(([s, id]) => `${s}(id=${id})`).join(', ')}], shared store across registrations`)

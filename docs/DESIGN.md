@@ -1,6 +1,6 @@
 # WhaleTV 工作台 —— 设计与 UI 规划
 
-> 初版（v0.1）已按本文档实现，当前版本 **v0.7.0**（对齐 dsh 0.1.6-alpha.2）。本文档同时记录已实现的形态与后续演进路线，作为「规划」的长期交付物；具体每版变更详见 [CHANGELOG.md](../CHANGELOG.md)，后续规划见 [ROADMAP.md](./ROADMAP.md)。
+> 初版（v0.1）已按本文档实现，当前版本 **v0.7.1**（对齐 dsh 0.1.7-alpha.1）。本文档同时记录已实现的形态与后续演进路线，作为「规划」的长期交付物；具体每版变更详见 [CHANGELOG.md](../CHANGELOG.md)，后续规划见 [ROADMAP.md](./ROADMAP.md)。
 
 ## 1. 背景与目标
 

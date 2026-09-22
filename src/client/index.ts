@@ -1,17 +1,17 @@
 /**
- * whaletv-workbench browser half: three slot registrations sharing one
- * store — the sidebar entry, the frame-wide dashboard panel, and the
- * settings page card that edits `whaletv-workbench` namespace prefs.
+ * whaletv-workbench browser half: two slot registrations sharing one
+ * store — the sidebar entry and the frame-wide dashboard panel.
  *
  * - SidebarEntry fills `sidebar.footer.action` with the workbench trigger.
  * - WorkbenchPanel fills `shell.overlay` with the dashboard (groups /
  *   skills / update flow).
- * - SettingsCard fills `settings.plugins.tab` on the settings page's
- *   Plugins section with a schema-driven form for the two scalar prefs.
+ *
+ * The plugin's scalar preferences (gitRemote / customSkillDirs) are edited
+ * through the dsh ≥ 0.1.7 auto-generated config page projected from the
+ * Host Config schema — no custom settings card anymore (0.7.1).
  *
  * Slot declarations from the shipped shell are awaited via
- * `ctx.slots.inject`, so apply order against ui-sidebar / ui-layout /
- * ui-settings-plugins is free.
+ * `ctx.slots.inject`, so apply order against ui-sidebar / ui-layout is free.
  */
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
 // Type-only: ctx.remote (openWorkspacePath) Context merge from the API remotes.
@@ -27,19 +27,9 @@ import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 // ISessions above.
 import type { IConversation } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import { writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives'
-// Type-only: the client settings-scope Context merge (ctx.settingsScope) and
-// the settings SlotMap merges — dsh ≥ 0.1.6 declares the Plugins-page tab slot
-// ('settings.plugins.tab') in the settings domain base (ui-settings), not in
-// ui-settings-plugins (which owns the section chrome and renders the tabs).
-import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
-// Type-only: keep the ui-settings-plugins dependency explicit — its apply
-// declares the 'settings.plugins.tab' child slot at runtime and renders it.
-import type {} from '@deepseek-ai/dsh-client-ui-settings-plugins/client'
 // Type-only: pull the uiWorkspace Context merge (startSession navigation).
 import type {} from '@deepseek-ai/dsh-client-ui-workspace/client'
 import type { WorkbenchInjected } from './contract.ts'
-// Type-only: the Host Config type parameterizes the settings scope binding.
-import type { Config } from '../index.ts'
 import type {
   WorkbenchConfigSaveResult, WorkbenchHealth, WorkbenchSessionFollowupResult,
   WorkbenchSkillImportRequest, WorkbenchSkillImportResult, WorkbenchSkillInstallRequest,
@@ -51,7 +41,6 @@ import type {
 import { createWorkbenchStore } from './store.ts'
 import { SidebarEntry } from './SidebarEntry.tsx'
 import { WorkbenchPanel } from './WorkbenchPanel.tsx'
-import { SettingsCard } from './SettingsCard.tsx'
 
 export type { SidebarEntryProps, WorkbenchPanelProps, WorkbenchInjected } from './contract.ts'
 export type {
@@ -62,7 +51,6 @@ export type {
 /**
  * Required client services:
  * - slots: keyed / list slot registrations
- * - settingsScope: bound namespace scope reads and writes for the settings card
  * - uiWorkspace: startSession navigation (the workspaces controller no longer
  *   carries it; dsh moved session-start to the uiWorkspace service)
  * - remote / remote.session: Host RPC for the native path opener
@@ -72,7 +60,7 @@ export type {
  *   current session's composer
  */
 export const inject = [
-  'slots', 'settingsScope', 'uiWorkspace', 'remote', 'remote.session', 'sessions', 'conversation',
+  'slots', 'uiWorkspace', 'remote', 'remote.session', 'sessions', 'conversation',
 ]
 
 /**
@@ -104,9 +92,10 @@ async function fetchJson<T extends { ok: boolean; error?: string }>(url: string,
 }
 
 /**
- * Register the sidebar entry, the panel, and the settings card once their
- * slot declarations land on the ledger; one store handle is shared by all
- * three registrations.
+ * Register the sidebar entry and the panel once their slot declarations land
+ * on the ledger; one store handle is shared by both registrations. The
+ * plugin's preferences live on the dsh ≥ 0.1.7 auto-generated config page
+ * (Host Config schema projection) — no settings card here anymore.
  * @param ctx - client root context.
  */
 export function apply(ctx: ClientContext): void {
@@ -242,24 +231,5 @@ export function apply(ctx: ClientContext): void {
       inject: injected,
     },
     WorkbenchPanel,
-  ))
-  // Settings Plugins-page tab — dsh ≥ 0.1.6 replaced the old keyed
-  // `settings.plugin.item` card with feature-owned tabs in the
-  // `settings.plugins.tab` list slot (declared at runtime by
-  // ui-settings-plugins' PluginsSettingsSection; a lone contribution fills
-  // the whole Plugins page, several render as a localized tab bar).
-  // Registration carries `id` (tab key) and `order`; the label is plain
-  // registrant-owned text (resolveSlotLabel accepts string | () => string).
-  ctx.slots.inject('settings.plugins.tab', () => ctx.slots.register(
-    {
-      name: 'settings.plugins.tab',
-      id: 'whaletv-workbench',
-      order: 50,
-      label: 'WhaleTV 工作台',
-      inject: () => ({
-        scope: ctx.settingsScope.bind<Config>({ namespace: 'whaletv-workbench' }),
-      }),
-    },
-    SettingsCard,
   ))
 }

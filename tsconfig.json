@@ -1,4 +1,12 @@
 {
+  // "paths" workaround (0.7.1): the 9 dangling profile junctions after the
+  // machine moved to dsh 0.1.7-alpha.1 include @deepseek-ai/dsh-client-ui-
+  // primitives, whose types are imported by the client half. Until
+  // `pnpm run link:harness` recreates those junctions (run it OUTSIDE the
+  // agent sandbox — it needs junction create/delete rights), tsc resolves
+  // the two renamed-location packages straight from the sibling harness
+  // checkout's emitted types. REMOVE this block once link:harness has run
+  // successfully — junction resolution should then be the single source.
   "compilerOptions": {
     "target": "ES2022",
     "module": "ESNext",
@@ -11,7 +19,10 @@
     "allowImportingTsExtensions": true,
     "esModuleInterop": true,
     "resolveJsonModule": true,
-    "types": ["node"]
+    "types": ["node"],
+    "paths": {
+      "@deepseek-ai/dsh-client-ui-primitives": ["../deepseek-harness/packages/client/ui-primitives/lib/types/index.d.ts"]
+    }
   },
   "include": ["src", "scripts", "tsdown.config.ts"]
 }

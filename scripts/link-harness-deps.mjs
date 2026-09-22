@@ -95,22 +95,28 @@ function resolveSource(name) {
 
 function linkPeers() {
   if (existsSync(join(HARNESS_ROOT, 'package.json'))) indexCheckout(HARNESS_ROOT)
-  const counts = { linked: 0, kept: 0, real: 0, pruned: 0, unresolved: [] }
+  const counts = { linked: 0, kept: 0, real: 0, pruned: 0, unresolved: [], failed: [] }
   const linkOne = (link, name, required) => {
-    const source = resolveSource(name)
-    if (source === undefined) {
-      if (linkHealthy(link)) return
-      // A dangling junction with no discoverable source is dead weight from a
-      // package dsh removed — prune it rather than leave it poisoning
-      // resolution. Required (declared) packages are reported loudly instead.
-      if (required) counts.unresolved.push(name)
-      else { rmSync(link, { force: true }); counts.pruned += 1 }
-      return
+    try {
+      const source = resolveSource(name)
+      if (source === undefined) {
+        if (linkHealthy(link)) return
+        // A dangling junction with no discoverable source is dead weight from a
+        // package dsh removed — prune it rather than leave it poisoning
+        // resolution. Required (declared) packages are reported loudly instead.
+        if (required) counts.unresolved.push(name)
+        else { rmSync(link, { force: true }); counts.pruned += 1 }
+        return
+      }
+      const outcome = ensureJunction(link, source)
+      if (outcome === 'repaired') counts.linked += 1
+      else if (outcome === 'kept') counts.kept += 1
+      else if (outcome === 'skipped-real-dir') counts.real += 1
+    } catch (error) {
+      // One locked/unremovable junction (a running dsh or antivirus holding
+      // the directory) must not kill the whole repair run.
+      counts.failed.push(`${name}: ${error instanceof Error ? error.message : String(error)}`)
     }
-    const outcome = ensureJunction(link, source)
-    if (outcome === 'repaired') counts.linked += 1
-    else if (outcome === 'kept') counts.kept += 1
-    else if (outcome === 'skipped-real-dir') counts.real += 1
   }
   // Mirror pass: only meaningful when the dsh flat fallback exists. On a
   // machine that never ran dsh (fresh clone, CI) the checkout pass below is
@@ -141,6 +147,10 @@ function linkPeers() {
   console.log(`link-harness: 新建/修复 ${counts.linked} 个 junction（保留 ${counts.kept}，实目录跳过 ${counts.real}，清理悬挂 ${counts.pruned}）`)
   if (counts.unresolved.length > 0) {
     console.warn(`link-harness: 以下声明的依赖在回退目录与 harness checkout 中均不可解析：${counts.unresolved.join(', ')}`)
+  }
+  if (counts.failed.length > 0) {
+    console.warn(`link-harness: ${counts.failed.length} 项处理失败（通常被运行中的进程占用，可稍后重跑）：`)
+    for (const line of counts.failed) console.warn(`  - ${line}`)
   }
 }
 

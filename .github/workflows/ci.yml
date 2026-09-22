@@ -1,10 +1,14 @@
 # Fast CI: install → version check → bundle → mock-based smoke.
 #
-# Deliberately NO harness types here: @deepseek-ai/* peers are resolved on
+# Deliberately NO harness code here: @deepseek-ai/* peers are resolved on
 # dev machines via scripts/link-harness-deps.mjs ($DSH_HOME fallback or a
 # sibling harness checkout), which a throwaway CI runner does not have.
-# tsc --noEmit against real dsh types runs in the weekly "dsh alignment"
-# workflow (.github/workflows/align.yml) instead.
+# Two consequences, both by design:
+#   - tsc --noEmit against real dsh types runs in the weekly "dsh alignment"
+#     workflow (.github/workflows/align.yml) instead.
+#   - smoke-host self-skips without the host runtime deps (yaml +
+#     @deepseek-ai/dsh-llm + @deepseek-ai/schemastery are bare imports of the
+#     built lib/index.js); the SKIP marker keeps the gate explicit.
 name: CI
 
 on:
@@ -36,5 +40,5 @@ jobs:
       - name: Build (icon + dual-face bundle)
         run: pnpm run bundle
 
-      - name: Smoke (client / apply / host contracts)
+      - name: Smoke (client / apply; host self-skips without harness deps)
         run: pnpm run smoke:ci
