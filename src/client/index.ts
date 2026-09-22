@@ -44,7 +44,7 @@ import type {
   WorkbenchConfigSaveResult, WorkbenchHealth, WorkbenchSessionFollowupResult,
   WorkbenchSkillImportRequest, WorkbenchSkillImportResult, WorkbenchSkillInstallRequest,
   WorkbenchSkillInstallResult, WorkbenchSkillList, WorkbenchSkillRemoveResult,
-  WorkbenchSkillSourceResult, WorkbenchSkillUpdateResult, WorkbenchState,
+  WorkbenchSkillUpdateResult, WorkbenchState,
   WorkbenchUpdateCheckResult, WorkbenchUpdateHistory, WorkbenchUpdateResult,
   WorkbenchUpdateRollbackResult, WorkbenchUpdateSkipResult, WorkbenchUsage,
 } from '../shared.ts'
@@ -193,8 +193,6 @@ export function apply(ctx: ClientContext): void {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name }),
       }),
-    loadSkillSource: (name: string) =>
-      fetchJson<WorkbenchSkillSourceResult>(`/whaletv/workbench/skills/source?name=${encodeURIComponent(name)}`),
     followup: (prompt, sessionId) =>
       fetchJson<WorkbenchSessionFollowupResult>('/whaletv/workbench/session/followup', {
         method: 'POST',

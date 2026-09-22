@@ -44,22 +44,29 @@ capabilities) and P3 (skill versioning), per [ROADMAP.md](./docs/ROADMAP.md).
 - **Per-skill "检查更新" (P3-21)**: `POST /skills/update` re-clones the
   recorded origin and applies a newer head (`changed` reports whether the
   SHA moved); the button only appears for skills with a Git origin.
-- **Skill panel editor (P3-23)**: `GET /skills/source?name=` serves the raw
-  SKILL.md of a `$DSH_HOME/skills`-managed skill; removable skill cards grow
-  an "编辑" button and an in-panel textarea editor whose save goes back
-  through the install route (in-place overwrite).
 - **Smoke covers the security boundaries (P4-28)**: the host smoke now
   asserts that git-import rejects `file://` URLs, the reserved `skill` name,
   non-kebab names, ref metacharacters, and `..` traversal before any
   subprocess spawns; that `/update/skip` validates the SHA charset; and that
   the favicon proxy refuses loopback origins.
 
+### Removed
+
+- **Skill panel editor** (P3-23 prototype, removed in the same-cycle review):
+  an accidental edit could silently corrupt an installed SKILL.md, and
+  delete + reinstall is the safer recovery for ordinary users. The
+  `GET /skills/source` route went with the UI — no dead surface shipped.
+- **Standalone header「更新」button**: merged into a single two-phase flow —
+  「检查更新」fetches and shows the commit banner, and the banner's 更新
+  button is the only path that pulls (mirrors x-hub's check → dialog →
+  apply pattern; the two parallel entries duplicated each other).
+
 ### Fixed
 
 - **Install-over-existing no longer erases versioning records**: writing a
-  skill that already has an origin record (the panel editor's save path)
-  now preserves the previous sourceUrl/sha/subPath/ref and only refreshes
-  the install timestamp.
+  skill that already has an origin record (e.g. reinstalling the same name
+  through the inline install form) now preserves the previous
+  sourceUrl/sha/subPath/ref and only refreshes the install timestamp.
 
 ### Changed
 

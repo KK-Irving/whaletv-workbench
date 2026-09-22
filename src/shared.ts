@@ -318,17 +318,6 @@ export interface WorkbenchSkillUpdateResult {
   error?: string
 }
 
-/** GET /whaletv/workbench/skills/source?name=<name> response (roadmap P3-23). */
-export interface WorkbenchSkillSourceResult {
-  ok: boolean
-  name?: string
-  /** Absolute path of the SKILL.md / *.md that was read. */
-  path?: string
-  /** Raw file body (frontmatter included). */
-  content?: string
-  error?: string
-}
-
 /**
  * POST /whaletv/workbench/session/followup payload.
  *

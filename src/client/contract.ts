@@ -13,7 +13,7 @@ import type {
   WorkbenchConfig, WorkbenchConfigSaveResult, WorkbenchHealth, WorkbenchSessionFollowupResult,
   WorkbenchSkillImportRequest, WorkbenchSkillImportResult, WorkbenchSkillInstallRequest,
   WorkbenchSkillInstallResult, WorkbenchSkillList, WorkbenchSkillRemoveResult,
-  WorkbenchSkillSourceResult, WorkbenchSkillUpdateResult, WorkbenchState,
+  WorkbenchSkillUpdateResult, WorkbenchState,
   WorkbenchUpdateCheckResult, WorkbenchUpdateHistory, WorkbenchUpdateResult,
   WorkbenchUpdateRollbackResult, WorkbenchUpdateSkipResult, WorkbenchUsage,
 } from '../shared.ts'
@@ -62,8 +62,6 @@ export type WorkbenchInjected = {
   removeSkill: (name: string) => Promise<WorkbenchSkillRemoveResult>
   /** Re-clone a skill's recorded origin and apply a newer head (P3-21). */
   updateSkill: (name: string) => Promise<WorkbenchSkillUpdateResult>
-  /** Read a workbench-managed skill's raw SKILL.md for the panel editor (P3-23). */
-  loadSkillSource: (name: string) => Promise<WorkbenchSkillSourceResult>
   /**
    * Queue an ordinary follow-up turn on a live agent (agent.followup).
    * Preferred over clipboard-copy + startSession when the caller knows the

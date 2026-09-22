@@ -23,7 +23,6 @@
  *                              skill body (bundle or flat markdown) into
  *                              $DSH_HOME/skills/<name>/
  *   POST /skills/remove      → remove a workbench-owned skill's dir
- *   GET  /skills/source      → raw SKILL.md body for the panel editor
  *   POST /skills/update      → re-clone the recorded origin and apply changes
  *   POST /session/followup   → ctx.agents.get(sessionId).followup(message)
  *                              — the modern replacement for
@@ -1493,28 +1492,6 @@ function removeSkillOnDisk(name: string): void {
 }
 
 /**
- * Serve the raw SKILL.md / *.md body of a workbench-managed skill for the
- * panel editor (roadmap P3-23). Only skills that resolve under
- * `$DSH_HOME/skills` are readable — project/agent/bundled skills stay
- * opaque. Saving goes back through the normal install route, which
- * overwrites in place and preserves the versioning record.
- */
-function readSkillSource(name: string): { ok: boolean; name?: string; path?: string; content?: string; error?: string } {
-  if (!SKILL_NAME_PATTERN.test(name)) {
-    return { ok: false, error: `skill 名称必须为 kebab-case，收到：${name}` }
-  }
-  const path = findManagedSkillPath(name)
-  if (path === undefined) {
-    return { ok: false, error: `未找到工作台管理的技能源文件：${name}（只能编辑 $DSH_HOME/skills 下的技能）` }
-  }
-  try {
-    return { ok: true, name, path, content: readFileSync(path, 'utf8') }
-  } catch (error) {
-    return { ok: false, error: `读取失败：${error instanceof Error ? error.message : String(error)}` }
-  }
-}
-
-/**
  * Route a follow-up prompt into an existing live agent's inbox.
  *
  * Prefers the client-supplied sessionId; falls back to
@@ -1805,14 +1782,6 @@ export function apply(ctx: Context, config: Config): void {
             payload => { sendJson(res, 200, payload) },
             (error: unknown) => { sendJson(res, 500, { ok: false, error: String(error) }) },
           )
-          return
-        }
-
-        // GET /skills/source?name=<name> — raw SKILL.md body for the panel
-        // editor (roadmap P3-23); only $DSH_HOME/skills skills are readable.
-        if (sub === '/skills/source' && (method === undefined || method === 'GET' || method === 'HEAD')) {
-          const name = new URL(req.url ?? '/', 'http://localhost').searchParams.get('name') ?? ''
-          sendJson(res, 200, readSkillSource(name))
           return
         }
 

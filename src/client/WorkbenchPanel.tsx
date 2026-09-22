@@ -393,7 +393,6 @@ export function WorkbenchPanel({
   importSkill,
   removeSkill,
   updateSkill,
-  loadSkillSource,
   followup,
   referenceSkill,
 }: WorkbenchPanelProps) {
@@ -882,14 +881,19 @@ export function WorkbenchPanel({
             </span>
           )}
           <Button size="sm" onClick={() => { void reload(); void reloadSkills() }} disabled={updating || saving}>刷新</Button>
-          <Button size="sm" onClick={() => { void runCheck() }} disabled={updating || checking || saving}>
-            {checking ? '检查中…' : '检查更新'}
+          {/* Single update entry (review 2026-09-03): 检查更新 fetches and shows
+              the commit banner; the banner's 更新 button is the only path that
+              pulls — the old always-on 更新 button duplicated the check. */}
+          <Button
+            size="sm"
+            variant={checkResult?.ok === true && (checkResult.behind ?? 0) > 0 ? 'primary' : undefined}
+            onClick={() => { void runCheck() }}
+            disabled={updating || checking || saving}
+          >
+            {updating ? '更新中…' : checking ? '检查中…' : '检查更新'}
           </Button>
           <Button size="sm" variant={editMode ? 'primary' : 'outline'} onClick={toggleEditMode} disabled={updating || saving}>
             {editMode ? '完成' : '编辑'}
-          </Button>
-          <Button size="sm" variant="primary" onClick={() => { void runUpdate() }} disabled={updating || saving}>
-            {updating ? '更新中…' : '更新'}
           </Button>
           <Button size="sm" onClick={() => { actions.setOpen(false) }} aria-label="关闭工作台">✕</Button>
         </header>
@@ -1075,7 +1079,6 @@ export function WorkbenchPanel({
             installSkill={installSkill}
             importSkill={importSkill}
             updateSkill={updateSkill}
-            loadSkillSource={loadSkillSource}
             onUse={(name) => { handleSkillUse(name) }}
             onRemove={(name) => { void handleSkillRemove(name) }}
             onReload={() => { void reloadSkills() }}
@@ -1230,12 +1233,11 @@ function SkillsSection(props: {
   installSkill: WorkbenchInjected['installSkill']
   importSkill: WorkbenchInjected['importSkill']
   updateSkill: WorkbenchInjected['updateSkill']
-  loadSkillSource: WorkbenchInjected['loadSkillSource']
   onUse: (name: string) => void
   onRemove: (name: string) => void
   onReload: () => void
 }) {
-  const { skills, skillsLoading, query, installSkill, importSkill, updateSkill, loadSkillSource, onUse, onRemove, onReload } = props
+  const { skills, skillsLoading, query, installSkill, importSkill, updateSkill, onUse, onRemove, onReload } = props
   const [showForm, setShowForm] = useState(false)
   const [mode, setMode] = useState<SkillFormMode>('inline')
   const [inlineDraft, setInlineDraft] = useState<SkillInlineDraft>(emptyInlineDraft)
@@ -1245,9 +1247,6 @@ function SkillsSection(props: {
   const [notice, setNotice] = useState<SkillNotice | null>(null)
   /** Name of the skill currently running 检查更新 (P3-21). */
   const [updatingSkill, setUpdatingSkill] = useState<string | null>(null)
-  /** Open panel editor state (P3-23): the skill being edited + its raw body. */
-  const [editSkill, setEditSkill] = useState<{ name: string; content: string } | null>(null)
-  const [loadingSource, setLoadingSource] = useState(false)
 
   const filtered = (skills?.skills ?? []).filter(s =>
     query === ''
@@ -1286,46 +1285,10 @@ function SkillsSection(props: {
     }
   }
 
-  /** Open the panel editor with a managed skill's raw body (roadmap P3-23). */
-  const startEditSkill = async (name: string): Promise<void> => {
-    setLoadingSource(true)
-    setError(null)
-    try {
-      const source = await loadSkillSource(name)
-      if (source.ok === true && source.content !== undefined) {
-        setEditSkill({ name, content: source.content })
-        setShowForm(false)
-      } else {
-        setError(source.error ?? `读取「${name}」失败`)
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
-    } finally {
-      setLoadingSource(false)
-    }
-  }
-
-  /** Save the panel editor back through the install route (overwrites in place). */
-  const submitSkillEdit = async (): Promise<void> => {
-    if (editSkill === null) return
-    if (editSkill.content.trim() === '') {
-      setError('技能正文不能为空')
-      return
-    }
-    setBusy(true)
-    setError(null)
-    try {
-      await installSkill({ name: editSkill.name, content: editSkill.content })
-      setNotice({ installed: [editSkill.name] })
-      setEditSkill(null)
-      onReload()
-    } catch (err) {
-      // Keep the editor open on failure so the user can retry without retyping.
-      setError(err instanceof Error ? err.message : String(err))
-    } finally {
-      setBusy(false)
-    }
-  }
+  // NOTE (review 2026-09-03): the in-panel SKILL.md editor (P3-23 prototype)
+  // was removed on purpose — an accidental edit could silently corrupt an
+  // installed skill, and delete + reinstall is the safer recovery for
+  // ordinary users. The /skills/source route went with it.
 
   const submitInline = async (): Promise<void> => {
     const name = inlineDraft.name.trim()
@@ -1504,32 +1467,6 @@ function SkillsSection(props: {
         </div>
       )}
 
-      {editSkill !== null && (
-        <div className={css.skillsForm}>
-          <div className={css.checkHead}>
-            <span>
-              编辑技能「{editSkill.name}」<span className={css.checkMeta}>（保存后原文件被覆盖；YAML frontmatter 一并编辑）</span>
-            </span>
-            <span className={css.spacer} />
-            <Button size="sm" className={css.dismiss} onClick={() => { setEditSkill(null) }} aria-label="关闭编辑器" disabled={busy}>✕</Button>
-          </div>
-          <textarea
-            className={css.skillsTextarea}
-            placeholder="SKILL.md 全文（含 frontmatter）"
-            value={editSkill.content}
-            onChange={event => { setEditSkill(prev => prev === null ? prev : { ...prev, content: event.target.value }) }}
-            rows={16}
-            disabled={busy}
-          />
-          <div className={css.formActions}>
-            <Button size="sm" variant="primary" onClick={() => { void submitSkillEdit() }} disabled={busy}>
-              {busy ? '保存中…' : '保存覆盖'}
-            </Button>
-            <Button size="sm" onClick={() => { setEditSkill(null) }} disabled={busy}>取消</Button>
-          </div>
-        </div>
-      )}
-
       {notice !== null && (
         <div className={css.skillsSuccess} role="status">
           <div className={css.skillsSuccessHead}>
@@ -1612,17 +1549,6 @@ function SkillsSection(props: {
             )}
             <div className={css.itemActions}>
               <Button size="sm" variant="outline" onClick={() => { onUse(skill.name) }}>使用</Button>
-              {skill.removable && (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => { void startEditSkill(skill.name) }}
-                  disabled={loadingSource || updatingSkill !== null}
-                  title="在工作台内编辑该技能的 SKILL.md 全文"
-                >
-                  {loadingSource === true ? '读取中…' : '编辑'}
-                </Button>
-              )}
               {skill.origin?.sourceUrl !== undefined && (
                 <Button
                   size="sm"

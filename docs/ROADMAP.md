@@ -10,8 +10,11 @@
 - ✅ **P0 全部**：dsh 0.1.6-alpha.2 对齐（`mainView` retention 读当前会话、`settings.plugins.tab`）、CI（ci.yml）、每周对齐 job（align.yml）、tsc 纳入 smoke、check-version 三处一致门、死代码清理、needRestart 按 host 文件 diff 精确化
 - ✅ **P1 全部**：检查/更新分离（`/update/check` + 提交列表 banner）、更新历史 + 回滚（updates.json + `/update/rollback`，脏工作区拒绝）、跳过此版本（`/update/skip`）、needRestart 驱动的结果文案
 - ✅ **P2 核心**：最近使用通栏（/usage + Top10 chips）、Alt+W 唤起、搜索 ↑↓/Enter 键盘导航 + 高亮、条目拖拽排序（组内 + 跨组）、可达性检查（/health + ✓✗ 徽标）、favicon 代理（/icon，私网拒绝）
-- ✅ **P3 核心**：技能版本化（installed-skills.json：来源 URL/subPath/ref/SHA，`/skills` 返回 origin + 卡片展示）、单技能「检查更新」（`/skills/update`，SHA 对比 + 覆盖安装）、技能面板内编辑（`/skills/source` + textarea 原位覆盖保存）
+- ✅ **P3 核心**：技能版本化（installed-skills.json：来源 URL/subPath/ref/SHA，`/skills` 返回 origin + 卡片展示）、单技能「检查更新」（`/skills/update`，SHA 对比 + 覆盖安装）
 - ✅ **P4 部分**：ADR 0001（配置与状态在 $DSH_HOME）、ADR 0002（provider rank 450）、link-harness-deps 支持无 $DSH_HOME 环境（CI 前置）、smoke-host 覆盖安全边界（git-import 白名单/保留字/ref 注入/穿越、skip SHA、favicon 私网）
+- ✅ **评审调整（2026-09-03 第二轮）**：
+  - 检查/更新合并为**单入口两阶段**：头部只留「检查更新」（有更新时变主色），拉取动作收敛到结果 banner 内的「更新」按钮——原两个按钮语义重叠
+  - 技能面板内编辑（P3-23 原型）**按评审移除**：误触改坏 SKILL.md 的风险大于收益，普通用户以「删除 + 重装」替代；`GET /skills/source` 路由一并移除，不留死接口
 
 **剩余（后续版本）**：
 
