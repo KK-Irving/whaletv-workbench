@@ -15,6 +15,14 @@ on:
     # Weekly, Monday 03:00 UTC — catch upstream breakage before users do.
     - cron: '0 3 * * 1'
   workflow_dispatch:
+  # Re-validate the alignment whenever the workflow itself changes: a push
+  # event runs the workflow file AS PUSHED (a re-run of an old run would
+  # reuse the old file — which is exactly how the ref: main typo survived
+  # its first fix).
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/align.yml'
 
 jobs:
   typecheck:
