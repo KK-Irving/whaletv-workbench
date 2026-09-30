@@ -2,6 +2,24 @@
 
 Notable changes per version. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) loosely; pre-1.0 minor bumps carry feature-level changes because the API surface is still shaping up.
 
+## 0.8.16 — 2026-09-30
+
+### Changed
+
+- **WorkbenchPanel 拆分完成（P4-26 收尾）**：`WorkbenchPanel.tsx` 1661 → 589 行，
+  拆出 `src/client/panel/` 的 11 个职责单一的文件——
+  - 纯函数：`entry-helpers.ts`（目标解析/草稿/重排代数）、`notices.ts`
+    （自动关闭窗口/热注入存活标记/HOST 偏斜文案）；
+  - 组件：`ItemForm.tsx` / `ItemCard.tsx` / `RecentBar.tsx` /
+    `UpdateCheckBanner.tsx` / `ConfirmDialog.tsx`；
+  - 领域 hooks：`usePanelData.ts`（数据加载 + 可达性）、`useUpdateFlow.ts`
+    （更新流 + 进度轮询 + 通知自动关闭）、`useEntriesEditing.ts`
+    （编辑态 + 持久化 + 拖拽/键盘重排）、`useRestart.ts`（计划探测 + 受守卫的
+    重启流程）。
+  纯内部重组：对外 `contract.ts` 与全部行为不变，逐字搬移；顺带把
+  `toggleEditMode` 在 setState updater 内嵌套调用其它 setState 的反模式
+  （React 18 StrictMode 下 updater 必须纯）改为顺序调用。
+
 ## 0.8.15 — 2026-09-30
 
 ### Changed

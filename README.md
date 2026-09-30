@@ -148,7 +148,16 @@ node scripts/install-profile.mjs web
     ├── shared.ts           # 双面共享 wire 类型
     └── client/
         ├── index.ts        # Browser 入口（slot 注册 + inject 面）
-        ├── WorkbenchPanel.tsx  # 面板主体（头部/条目/搜索/更新）
+        ├── WorkbenchPanel.tsx  # 面板壳：store 读取 + hook 编排 + JSX
+        ├── panel/          # 面板领域拆分（0.8.16）
+        │   ├── entry-helpers.ts    # 条目目标解析/草稿/重排纯函数
+        │   ├── notices.ts          # 通知窗口/热注入存活标记/偏斜文案
+        │   ├── ItemForm.tsx / ItemCard.tsx / RecentBar.tsx
+        │   ├── UpdateCheckBanner.tsx / ConfirmDialog.tsx
+        │   ├── usePanelData.ts     # 数据加载 + 可达性
+        │   ├── useUpdateFlow.ts    # 更新流 + 进度轮询 + 通知自动关闭
+        │   ├── useEntriesEditing.ts# 编辑态 + 持久化 + 拖拽/键盘重排
+        │   └── useRestart.ts       # 计划探测 + 受守卫的重启流程
         ├── SkillsSection.tsx   # 技能专区（安装/导入/检查更新）
         ├── SidebarEntry.tsx    # 侧边栏入口
         ├── store.ts        # 共享 store（面板开关/搜索/更新状态）
@@ -186,7 +195,7 @@ node scripts/install-profile.mjs web
 
 ## 版本
 
-当前版本 **v0.8.15**（对齐 dsh 0.2.0-rc.2）。每次发版的变更详见 [CHANGELOG.md](./CHANGELOG.md)。面板顶部会显示实际运行的版本号（读自 `package.json`），跟这里对齐即可（`pnpm run check:version` 会在冒烟链里校验三处一致）。
+当前版本 **v0.8.16**（对齐 dsh 0.2.0-rc.2）。每次发版的变更详见 [CHANGELOG.md](./CHANGELOG.md)。面板顶部会显示实际运行的版本号（读自 `package.json`），跟这里对齐即可（`pnpm run check:version` 会在冒烟链里校验三处一致）。
 
 ## License
 
