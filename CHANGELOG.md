@@ -2,6 +2,22 @@
 
 Notable changes per version. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) loosely; pre-1.0 minor bumps carry feature-level changes because the API surface is still shaping up.
 
+## 0.8.0 — 2026-09-30
+
+Structure release: the two monolith files are split into domain modules,
+completing roadmap P4-25/26.
+
+### Changed
+
+- **Host split**: `src/index.ts` (2105 → 822 lines) partitioned into
+  `host-plumbing.ts` (exec/JSON/paths), `update.ts` (update pipeline +
+  probe + history + rollback + skip state), `skills.ts` (provider + import
+  + records + catalog), `extras.ts` (usage + health + favicon), and a slim
+  `index.ts` (Config + apply + route dispatch). Split by a one-shot
+  mechanical script partitioning at top-level declaration boundaries.
+- **Panel split**: `WorkbenchPanel.tsx` (1514 → 1143 lines) — SkillsSection
+  extracted to `SkillsSection.tsx` (469 lines, self-contained component).
+
 ## 0.7.7 — 2026-09-30
 
 Fixed the tarball update check for real — the self-identifying diagnostics
