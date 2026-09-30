@@ -2,6 +2,23 @@
 
 Notable changes per version. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) loosely; pre-1.0 minor bumps carry feature-level changes because the API surface is still shaping up.
 
+## 0.7.7 — 2026-09-30
+
+Fixed the tarball update check for real — the self-identifying diagnostics
+shipped in the previous build exposed the actual bug.
+
+### Fixed
+
+- **`updateRepo` was interpolated as `[object Object]`.** dsh ≥ 0.1.7
+  resolves **volatile** Config fields to accessor objects (`.get()`), not
+  plain strings; v0.7.4 declared `updateRepo` volatile and interpolated it
+  raw, so every probe source was asked for
+  `https://.../[object Object]/...` and answered 404/400/403 — exactly what
+  the per-source diagnostics then reported. Volatile fields are now
+  unwrapped at read time (with the default as fallback), and the probe
+  error self-identifies the build, package directory, and exact URLs
+  probed, so a stale host module betrays itself immediately.
+
 ## 0.7.6 — 2026-09-30
 
 CN-network-proof version probe for the tarball update channel.

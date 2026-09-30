@@ -614,6 +614,21 @@ function pluginManagerLike(ctx: Context): TarballPluginManager | undefined {
 }
 
 /**
+ * Volatile Config fields (dsh ≥ 0.1.7 live-editable settings) resolve to
+ * accessor objects with a `.get()` method rather than plain values — unwrap
+ * before use. THE `updateRepo` BUG (v0.7.4–0.7.6): the raw accessor object
+ * was interpolated into the probe URLs, so every source was asked for
+ * `https://.../[object Object]/...` and answered 404/400/403.
+ */
+function readConfigValue(config: Config, field: 'updateRepo'): string {
+  const raw = config[field] as unknown
+  const value = raw !== null && typeof raw === 'object' && typeof (raw as { get?: unknown }).get === 'function'
+    ? (raw as { get: () => unknown }).get()
+    : raw
+  return typeof value === 'string' && value.trim() !== '' ? value.trim() : 'KK-Irving/whaletv-workbench'
+}
+
+/**
  * Fetch the update repo's default-branch package.json version (tarball update
  * channel). Three sources are tried in order — mainland-China networks
  * routinely block raw.githubusercontent.com while reaching api.github.com
@@ -1831,7 +1846,7 @@ export function apply(ctx: Context, config: Config): void {
             return
           }
           updating = true
-          void runUpdate(ctx, config.updateRepo).then(
+          void runUpdate(ctx, readConfigValue(config, 'updateRepo')).then(
             result => {
               // A successful move invalidates any "skip this version" marker.
               if (result.ok && result.changed === true) clearSkippedHead()
@@ -1845,7 +1860,7 @@ export function apply(ctx: Context, config: Config): void {
         // GET /update/check — fetch + ahead/behind + incoming commit list,
         // no working-tree changes (roadmap P1-8).
         if (sub === '/update/check' && (method === undefined || method === 'GET' || method === 'HEAD')) {
-          void runUpdateCheck(readSkippedHead(), config.updateRepo).then(
+          void runUpdateCheck(readSkippedHead(), readConfigValue(config, 'updateRepo')).then(
             result => { sendJson(res, result.ok ? 200 : 500, result) },
             (error: unknown) => { sendJson(res, 500, { ok: false, upToDate: false, error: String(error) }) },
           )
