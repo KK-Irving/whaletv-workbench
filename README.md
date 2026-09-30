@@ -72,6 +72,8 @@ dsh plugin --profile web add github:KK-Irving/whaletv-workbench
 
 git 直装会触发本包的 `prepare` 脚本自动构建 `lib/`。首次可能被 pnpm ≥ 10 的 `allowBuilds` 拦截，按提示把 `whaletv-workbench` 加进 `$DSH_HOME/profiles/web/pnpm-workspace.yaml` 的 `allowBuilds` 后再跑一次。
 
+**桌面端（Electron）安装**：`profiles/desktop` 由桌面应用独占管理（CLI 会对该 profile 报 `is managed exclusively by the Electron application`），安装入口在桌面端的插件管理界面。同样会碰到 `allowBuilds` 拦截——把 `whaletv-workbench: true` 加进 `$DSH_HOME/profiles/desktop/pnpm-workspace.yaml` 的 `allowBuilds` 后，在应用内重试安装即可。
+
 **一句话卸载**：
 
 ```powershell
