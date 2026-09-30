@@ -30,4 +30,4 @@ $DSH_HOME/whaletv-workbench/
 ## 后果
 
 - Host 的所有写路径都锚定 `WORKBENCH_STATE_DIR`，删除插件不影响用户数据。
-- 技能版本记录刻意不走 `ctx.settings`（schema 保持扁平、老用户层零迁移），见 0003 的同一逻辑。
+- 技能版本记录刻意不走 `ctx.settings`（schema 保持扁平、老用户层零迁移）——同一逻辑也适用于更新历史与使用记录。

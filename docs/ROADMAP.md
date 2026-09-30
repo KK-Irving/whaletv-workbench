@@ -153,7 +153,7 @@
 | 26 | **Panel 拆分**：`WorkbenchPanel.tsx` → `SkillsSection.tsx` / `ItemForm.tsx` / `UpdateFooter.tsx` | 同上，UI 侧 |
 | 27 | **dsh 兼容层集中**：所有对 dsh API 的类型断言/取值收口到 `src/compat.ts`（Host）+ `src/client/compat.ts`，升级 dsh 只改两处 | §2.2-1 的长期解法 |
 | 28 | **冒烟增强**：git import 的 URL 白名单 / ref 注入拒绝 / staging 清理路径补 mock 测试；评估 `node --test` 结构化 | 现有 smoke 不覆盖安全边界 |
-| 29 | **ADR 目录**：补 `docs/adr/0001-config-in-dsh-home.md`、`0002-skill-provider-rank-450.md`、`0003-update-via-git-pull.md` | 学 x-hub 的决策留痕 |
+| 29 | ✅ **ADR 目录**：`docs/adr/0001-config-and-state-in-dsh-home.md`、`0002-skill-provider-rank-450.md`、`0003-restart-is-manual-on-desktop.md`（原计划的 `0003-update-via-git-pull` 未写，更新通道的决策可另起 `0004`——0.8.1 起 tarball 通道改用直连 `pnpm add`，0.8.10 又加了 pnpm 构建白名单自动授权，两件事都值得留痕） | 学 x-hub 的决策留痕 |
 | 30 | **发布工程**：打 tag + GitHub Release；check-version 脚本（P0-5）扩展为发版前检查 | 当前只有 main 裸提交 |
 
 ### 里程碑与节奏

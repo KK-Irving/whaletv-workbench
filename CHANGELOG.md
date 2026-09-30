@@ -2,6 +2,23 @@
 
 Notable changes per version. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) loosely; pre-1.0 minor bumps carry feature-level changes because the API surface is still shaping up.
 
+## 0.8.14 — 2026-09-30
+
+### Docs
+
+- **新增 ADR 0003：桌面端不做面板内重启**
+  （`docs/adr/0003-restart-is-manual-on-desktop.md`）——把 0.8.9 → 0.8.13 这段
+  弯路连同证据落成决策记录：桌面端 harness 是 Electron shell 的 IPC 子进程，双方
+  协议里没有 restart；子进程自行退出会被判为崩溃；子进程命令行缺少 shell 注入的
+  `ELECTRON_RUN_AS_NODE=1`，手工运行会启动第二个实例并抢占端口与单实例锁。结论：
+  只有普通 Node CLI 宿主由插件重启，桌面端 / systemd 一律手动并给出精确入口，
+  **且桌面端不再返回任何可复制命令**；dsh 若将来开放重启通道，本 ADR 需重评。
+- README 目录结构标注现有三个 ADR；ADR 0001 中指向尚不存在的 0003 的引用改为就地
+  说明；ROADMAP P4-29 更新为实际编号（原计划的 `0003-update-via-git-pull` 顺延为
+  `0004`，覆盖 0.8.1 直连 `pnpm add` 与 0.8.10 构建白名单自动授权两件事）。
+- `src/restart.ts` 模块注释同步到 0.8.13 之后的真实行为（原文仍在描述已移除的
+  `app.relaunch()` 方案）。
+
 ## 0.8.13 — 2026-09-30
 
 ### Fixed

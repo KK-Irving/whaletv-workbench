@@ -128,7 +128,7 @@ node scripts/install-profile.mjs web
 ├── docs/
 │   ├── DESIGN.md           # 设计与 UI 规划
 │   ├── ROADMAP.md          # 路线图与执行状态
-│   └── adr/                # 架构决策记录
+│   └── adr/                # 架构决策记录（0001 配置落 $DSH_HOME / 0002 provider rank / 0003 桌面端不做面板内重启）
 ├── scripts/
 │   ├── gen-icon.mjs         # 图标 SVG → data URL 模块
 │   ├── link-harness-deps.mjs   # 镜像 harness 依赖 junction（跨版本容错）
@@ -186,7 +186,7 @@ node scripts/install-profile.mjs web
 
 ## 版本
 
-当前版本 **v0.8.13**（对齐 dsh 0.2.0-rc.2）。每次发版的变更详见 [CHANGELOG.md](./CHANGELOG.md)。面板顶部会显示实际运行的版本号（读自 `package.json`），跟这里对齐即可（`pnpm run check:version` 会在冒烟链里校验三处一致）。
+当前版本 **v0.8.14**（对齐 dsh 0.2.0-rc.2）。每次发版的变更详见 [CHANGELOG.md](./CHANGELOG.md)。面板顶部会显示实际运行的版本号（读自 `package.json`），跟这里对齐即可（`pnpm run check:version` 会在冒烟链里校验三处一致）。
 
 ## License
 
