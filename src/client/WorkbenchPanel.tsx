@@ -656,6 +656,16 @@ export function WorkbenchPanel({
     return () => { window.clearTimeout(timer) }
   }, [checkResult, actions])
 
+  // Reachability badges are a snapshot of one probe run, not permanent state:
+  // they clear on the same window so a stale ✓/✗ never lingers on the cards
+  // (including the "✓ n / m 可达" line in the edit bar). A running probe is
+  // never cut short — the countdown starts when its results land.
+  useEffect(() => {
+    if (health === null || healthBusy) return
+    const timer = window.setTimeout(() => { setHealth(null) }, NOTICE_AUTO_DISMISS_MS)
+    return () => { window.clearTimeout(timer) }
+  }, [health, healthBusy])
+
   const reload = useCallback(async () => {
     try {
       const next = await loadState()

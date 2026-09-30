@@ -2,6 +2,17 @@
 
 Notable changes per version. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) loosely; pre-1.0 minor bumps carry feature-level changes because the API surface is still shaping up.
 
+## 0.8.7 — 2026-09-30
+
+### Changed
+
+- **Reachability results clear themselves after 10s.** The ✓/✗ badges from
+  检查可达性 (and the "✓ n / m 可达" summary line) are a snapshot of one probe
+  run, not permanent state — they now close on the same 10s window as the
+  other informational notices instead of sitting on the cards until the next
+  run. A probe still in flight is never cut short: the countdown starts when
+  its results land.
+
 ## 0.8.6 — 2026-09-30
 
 ### Changed
