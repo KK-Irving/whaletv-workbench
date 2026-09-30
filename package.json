@@ -1,6 +1,6 @@
 {
   "name": "whaletv-workbench",
-  "version": "0.7.1",
+  "version": "0.7.2",
   "private": true,
   "description": "WhaleTV 工作台插件：网页/文档/应用/技能一键跳转 + 点击即用的自更新，热插入 DeepSeek Harness (dsh) Web 界面",
   "license": "MIT",
@@ -23,8 +23,7 @@
   "files": [
     "lib",
     "config/workbench.example.json",
-    "cordis.patch.yml",
-    "scripts/maybe-prepare.mjs"
+    "cordis.patch.yml"
   ],
   "dsh": {
     "bundle": {
@@ -42,7 +41,6 @@
     "gen:icon": "node scripts/gen-icon.mjs",
     "bundle": "node scripts/gen-icon.mjs && tsdown",
     "build": "pnpm run bundle",
-    "prepare": "node scripts/maybe-prepare.mjs",
     "check:version": "node scripts/check-version.mjs",
     "check:types": "tsc --noEmit",
     "smoke": "pnpm run check:version && pnpm run check:types && node scripts/smoke-client.mjs && node scripts/smoke-apply.mjs && node scripts/smoke-host.mjs",

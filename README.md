@@ -58,7 +58,7 @@ WhaleTV 工作台 —— DeepSeek Harness（`dsh`）的站外 Web 插件：把�
 **从本地目录安装**（推荐用于开发）：
 
 ```powershell
-# 先构建一次，让 lib/ 就绪（link: 协议下 pnpm 不会自动跑 prepare）
+# lib/ 已随仓库提交；改了源码才需要重新构建
 pnpm install; pnpm run bundle
 # 一键安装
 dsh plugin --profile web add e:\DeepSeek\whaletv-workbench
@@ -70,9 +70,9 @@ dsh plugin --profile web add e:\DeepSeek\whaletv-workbench
 dsh plugin --profile web add github:KK-Irving/whaletv-workbench
 ```
 
-git 直装会触发本包的 `prepare` 脚本自动构建 `lib/`。首次可能被 pnpm ≥ 10 的 `allowBuilds` 拦截，按提示把 `whaletv-workbench` 加进 `$DSH_HOME/profiles/web/pnpm-workspace.yaml` 的 `allowBuilds` 后再跑一次。
+`lib/` 产物已随仓库提交（0.7.2 起），安装包**不含任何构建脚本**——不会触发 pnpm 的 `allowBuilds` 门，也不需要现场编译，任何 profile 开箱即装。
 
-**桌面端（Electron）安装**：`profiles/desktop` 由桌面应用独占管理（CLI 会对该 profile 报 `is managed exclusively by the Electron application`），安装入口在桌面端的插件管理界面。同样会碰到 `allowBuilds` 拦截——把 `whaletv-workbench: true` 加进 `$DSH_HOME/profiles/desktop/pnpm-workspace.yaml` 的 `allowBuilds` 后，在应用内重试安装即可。
+**桌面端（Electron）安装**：`profiles/desktop` 由桌面应用独占管理（CLI 会对该 profile 报 `is managed exclusively by the Electron application`），安装入口在桌面端的插件管理界面，同样开箱即装、无需任何 allowlist 配置。
 
 **一句话卸载**：
 
@@ -164,7 +164,7 @@ node scripts/install-profile.mjs web
 
 ## 版本
 
-当前版本 **v0.7.1**（对齐 dsh 0.1.7-alpha.1）。每次发版的变更详见 [CHANGELOG.md](./CHANGELOG.md)。面板顶部会显示实际运行的版本号（读自 `package.json`），跟这里对齐即可（`pnpm run check:version` 会在冒烟链里校验三处一致）。
+当前版本 **v0.7.2**（对齐 dsh 0.1.7-alpha.1）。每次发版的变更详见 [CHANGELOG.md](./CHANGELOG.md)。面板顶部会显示实际运行的版本号（读自 `package.json`），跟这里对齐即可（`pnpm run check:version` 会在冒烟链里校验三处一致）。
 
 ## License
 

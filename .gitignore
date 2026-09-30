@@ -1,8 +1,13 @@
-# Dependencies / build output
+# Dependencies
 node_modules/
 .pnpm-store/
-lib/
 *.tsbuildinfo
+
+# lib/ IS committed on purpose (0.7.2): the primary install paths — the dsh
+# desktop app and `dsh plugin add github:...` — fetch a git tarball, and a
+# build-script-free tarball installs without pnpm's allowBuilds gate on any
+# profile. Rebuild locally with `pnpm run bundle`; commit the refreshed
+# lib/ together with the source change that produced it.
 
 # Local user config: since v0.3 the panel writes to
 # $DSH_HOME/whaletv-workbench/workbench.json (outside this repo). The old

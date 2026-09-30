@@ -2,6 +2,35 @@
 
 Notable changes per version. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) loosely; pre-1.0 minor bumps carry feature-level changes because the API surface is still shaping up.
 
+## 0.7.2 — 2026-09-30
+
+Zero-friction install release: the built `lib/` is now committed to the repo,
+so a GitHub tarball install carries its own artifacts and needs **no build
+scripts** — which removes pnpm 11's `allowBuilds` gate for every profile
+(web, the Electron-managed desktop profile, CI) permanently.
+
+### Changed
+
+- **`lib/` is committed and the `prepare` script is gone.** GitHub tarball
+  installs previously had to run `prepare` (tsc build) at install time, and
+  pnpm 11 blocks build scripts of git-hosted packages unless the consuming
+  profile allowlists the exact `name@tarball-URL` — a URL that changes with
+  every upstream commit (verified experimentally: plain-name and glob
+  allowBuilds keys do not match). Shipping `lib/` removes the script, the
+  gate, and the per-commit allowlist treadmill in one move. Rebuild locally
+  with `pnpm run bundle` and commit the refreshed `lib/` together with the
+  source change.
+- **Removed dead packaging pieces**: `scripts/maybe-prepare.mjs` (the
+  prepare gate it implemented no longer exists) and the `SettingsCard`
+  tombstone files (removed in 0.7.1; the editor toolchain now has a working
+  delete path).
+
+### Migration
+
+- Existing installs keep working; `dsh plugin add` re-resolves the updated
+  tarball and no longer needs any `allowBuilds` entry (existing entries in
+  profile `pnpm-workspace.yaml` files are harmless and can be deleted).
+
 ## 0.7.1 — 2026-09-03
 
 Alignment release for dsh **0.1.7-alpha.1**, plus the CI fix for 0.7.0's
