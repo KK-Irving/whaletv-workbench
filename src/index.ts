@@ -618,21 +618,26 @@ function pluginManagerLike(ctx: Context): TarballPluginManager | undefined {
  * channel). Three sources are tried in order — mainland-China networks
  * routinely block raw.githubusercontent.com while reaching api.github.com
  * or the jsDelivr CDN, so the chain degrades instead of failing the check.
+ * Every attempt is recorded so a total failure can explain itself.
  */
-async function fetchLatestTarballVersion(repo: string): Promise<string | undefined> {
-  const sources: Array<{ url: string; parse: (body: string) => string | undefined }> = [
+async function fetchLatestTarballVersion(repo: string): Promise<{ version?: string; attempts: string[] }> {
+  const attempts: string[] = []
+  const sources: Array<{ name: string; url: string; parse: (body: string) => string | undefined }> = [
     {
       // Raw CDN first: live commit HEAD, no cache lag.
+      name: 'raw',
       url: `https://raw.githubusercontent.com/${repo}/master/package.json`,
       parse: body => parseVersionField(body),
     },
     {
       // jsDelivr CDN: plain JSON, CN-friendly edge cache (may lag master by up to 12h).
+      name: 'jsdelivr',
       url: `https://cdn.jsdelivr.net/gh/${repo}@master/package.json`,
       parse: body => parseVersionField(body),
     },
     {
       // GitHub API: contents endpoint returns the file base64-encoded.
+      name: 'api',
       url: `https://api.github.com/repos/${repo}/contents/package.json?ref=master`,
       parse: body => {
         try {
@@ -653,16 +658,21 @@ async function fetchLatestTarballVersion(repo: string): Promise<string | undefin
         signal: controller.signal,
         headers: { 'User-Agent': 'whaletv-workbench-update-check', Accept: 'application/vnd.github+json' },
       })
-      if (!response.ok) continue
+      if (!response.ok) {
+        attempts.push(`${source.name}: HTTP ${response.status}`)
+        continue
+      }
       const version = source.parse(await response.text())
-      if (version !== undefined) return version
-    } catch {
-      /* try the next source */
+      if (version !== undefined) return { version, attempts }
+      attempts.push(`${source.name}: 响应不含版本号`)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      attempts.push(`${source.name}: ${message === 'This operation was aborted' ? '超时(8s)' : message}`)
     } finally {
       clearTimeout(timer)
     }
   }
-  return undefined
+  return { attempts }
 }
 
 /** Pull the semver `version` field out of a package.json document. */
@@ -740,16 +750,16 @@ async function runUpdateCheck(skippedHead: string, updateRepo: string): Promise<
     // git-based checking can never work here. Compare versions instead — the
     // installed package.json against the update repo's master package.json.
     const installedVersion = readVersion()
-    const latestVersion = await fetchLatestTarballVersion(updateRepo)
-    if (latestVersion === undefined) {
+    const probe = await fetchLatestTarballVersion(updateRepo)
+    if (probe.version === undefined) {
       return {
         ok: false, upToDate: false, tarball: true, installedVersion,
-        error: '无法获取最新版本信息（访问 GitHub 失败）。请检查网络后重试。',
+        error: `无法获取最新版本信息（所有版本探测源失败：${probe.attempts.join('；')}）。请检查网络或代理设置后重试。`,
       }
     }
     return {
-      ok: true, upToDate: !isSemverGt(latestVersion, installedVersion), tarball: true,
-      installedVersion, latestVersion,
+      ok: true, upToDate: !isSemverGt(probe.version, installedVersion), tarball: true,
+      installedVersion, latestVersion: probe.version,
     }
   }
   let upstream = branch === 'HEAD'
