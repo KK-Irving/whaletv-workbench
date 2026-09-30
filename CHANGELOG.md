@@ -2,6 +2,14 @@
 
 Notable changes per version. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) loosely; pre-1.0 minor bumps carry feature-level changes because the API surface is still shaping up.
 
+## 0.8.15 — 2026-09-30
+
+### Changed
+
+- **「重启 dsh」按钮移到「刷新」旁边。** 之前排在最右侧（✕ 之前），把
+  刷新 / 检查更新 / 编辑 往中间挤，排版难看。现在与「刷新」同属维护类操作
+  放在一起；两个状态徽标（服务端待重启 / 手动重启入口）保持在右侧原位。
+
 ## 0.8.14 — 2026-09-30
 
 ### Docs

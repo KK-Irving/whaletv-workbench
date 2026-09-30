@@ -1333,6 +1333,20 @@ export function WorkbenchPanel({
             </span>
           )}
           <Button size="sm" onClick={() => { void reload(); void reloadSkills() }} disabled={updating || saving}>刷新</Button>
+          {/* Restart sits beside 刷新 on purpose: both are maintenance actions,
+              and at the far right it widened the action cluster enough to push
+              刷新/检查更新/编辑 toward the middle. */}
+          {restartInfo?.relaunchable === true && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => { void runRestart() }}
+              disabled={updating || saving || restarting}
+              title={restartInfo.note ?? '结束并重新拉起 dsh；面板会等待服务恢复后自动刷新'}
+            >
+              {restarting ? '重启中…' : '重启 dsh'}
+            </Button>
+          )}
           {/* Single update entry (review 2026-09-03): 检查更新 fetches and shows
               the result banner; the banner's 更新 button is the only path that
               applies. Both install kinds are supported: git checkouts compare
@@ -1356,17 +1370,6 @@ export function WorkbenchPanel({
               The desktop app cannot (its shell exposes no restart to plugin
               processes), so there the badge names the real entry point
               instead of offering a button that cannot work. */}
-          {restartInfo?.relaunchable === true && (
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => { void runRestart() }}
-              disabled={updating || saving || restarting}
-              title={restartInfo.note ?? '结束并重新拉起 dsh；面板会等待服务恢复后自动刷新'}
-            >
-              {restarting ? '重启中…' : '重启 dsh'}
-            </Button>
-          )}
           {restartInfo !== null && restartInfo.relaunchable === false && (
             <span className={css.skewBadge} title={restartInfo.note}>
               {restartInfo.externalAction ?? '需手动重启'}
