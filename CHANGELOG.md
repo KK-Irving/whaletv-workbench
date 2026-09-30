@@ -2,6 +2,12 @@
 
 Notable changes per version. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) loosely; pre-1.0 minor bumps carry feature-level changes because the API surface is still shaping up.
 
+## 0.8.1 — 2026-09-30
+
+Update-flow validation release: exists purely so the desktop app can test
+the full in-panel update loop (检查更新 → 有新版本 → 更新 → 重启) against
+a real version bump.
+
 ## 0.8.0 — 2026-09-30
 
 Structure release: the two monolith files are split into domain modules,
