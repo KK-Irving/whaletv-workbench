@@ -883,15 +883,26 @@ export function WorkbenchPanel({
           <Button size="sm" onClick={() => { void reload(); void reloadSkills() }} disabled={updating || saving}>刷新</Button>
           {/* Single update entry (review 2026-09-03): 检查更新 fetches and shows
               the commit banner; the banner's 更新 button is the only path that
-              pulls — the old always-on 更新 button duplicated the check. */}
-          <Button
-            size="sm"
-            variant={checkResult?.ok === true && (checkResult.behind ?? 0) > 0 ? 'primary' : undefined}
-            onClick={() => { void runCheck() }}
-            disabled={updating || checking || saving}
-          >
-            {updating ? '更新中…' : checking ? '检查中…' : '检查更新'}
-          </Button>
+              pulls. Tarball installs (desktop app / github add) have no .git —
+              the entry degrades to an "应用内安装" badge pointing at the app's
+              own plugin manager for updates. */}
+          {state?.git.configured === true ? (
+            <Button
+              size="sm"
+              variant={checkResult?.ok === true && (checkResult.behind ?? 0) > 0 ? 'primary' : undefined}
+              onClick={() => { void runCheck() }}
+              disabled={updating || checking || saving}
+            >
+              {updating ? '更新中…' : checking ? '检查中…' : '检查更新'}
+            </Button>
+          ) : state !== null && (
+            <span
+              className={css.checkMeta}
+              title="应用内安装的副本（无 .git）：更新请在 dsh 桌面端的插件管理界面重装本插件"
+            >
+              应用内安装
+            </span>
+          )}
           <Button size="sm" variant={editMode ? 'primary' : 'outline'} onClick={toggleEditMode} disabled={updating || saving}>
             {editMode ? '完成' : '编辑'}
           </Button>

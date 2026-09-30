@@ -2,6 +2,23 @@
 
 Notable changes per version. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) loosely; pre-1.0 minor bumps carry feature-level changes because the API surface is still shaping up.
 
+## 0.7.3 — 2026-09-30
+
+Install-kind-aware update UX: tarball installs (the dsh desktop app and
+`plugin add github:`) ship no `.git`, so the git-based 检查更新/一键更新
+can never apply there — the panel now says so instead of surfacing a raw
+git error.
+
+### Changed
+
+- **Panel header degrades by install kind.** For tarball installs the
+  检查更新 button is replaced by an "应用内安装" badge whose tooltip points
+  at the desktop app's plugin manager (reinstall there = update to latest
+  main). Git-checkout installs keep the full check/apply flow.
+- Host `/update/check` and `/update` return an actionable message for
+  tarball installs (update via the desktop app's plugin manager) instead of
+  "请先关联远程仓库".
+
 ## 0.7.2 — 2026-09-30
 
 Zero-friction install release: the built `lib/` is now committed to the repo,

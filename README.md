@@ -21,7 +21,7 @@ WhaleTV 工作台 —— DeepSeek Harness（`dsh`）的站外 Web 插件：把�
   - **删除**：只允许工作台自己写入 `$DSH_HOME/skills/` 的技能。项目/agent/内置技能保持只读。
   - **诊断**：`GET /whaletv/workbench/skills/debug` 返回本地 `$DSH_HOME/skills` 路径、目录内容、相关环境变量、dsh 官方注册表 snapshot——用来定位"文件在盘上但面板看不到"的问题。
 - **偏好设置**：dsh ≥ 0.1.7 把插件的 `Config` schema（`gitRemote` / `customSkillDirs`，声明为 volatile）直接投影成 Plugins 设置页的在线表单，无需自研卡片；插件的自持数据（技能版本记录 `installed-skills.json`、跳过的更新头 `update-state.json`）放在 `$DSH_HOME/whaletv-workbench/` 自己的 JSON 文档里，不占 settings 文档。
-- **一键更新**：面板顶部「更新」按钮执行 `git pull --ff-only` → （有更新时）`pnpm install` + 重建 client bundle → 通过 `clientModules.rebuilt` 热注入，开发模式下浏览器自动刷新；涉及服务端改动时提示重启 dsh。更新日志完整展示在面板底部。
+- **检查更新 / 一键更新**：面板顶部「检查更新」执行 `git fetch` + ahead/behind 对比并展示新提交列表，「更新」按钮执行 `git pull --ff-only` → （有更新时）`pnpm install` + 重建 client bundle → 通过 `clientModules.rebuilt` 热注入，开发模式下浏览器自动刷新；涉及服务端改动时提示重启 dsh。更新日志完整展示在面板底部。**仅对 git 检出安装有效**——桌面端等 tarball 安装副本无 `.git`，面板会显示「应用内安装」徽标，更新请在应用的插件管理界面重装。
 - **工作台图标**：`assets/workbench.svg`（品牌红面板网格）构建时内嵌为 SVG data URL，矢量缩放不因压缩模糊，用于入口图标与面板头部（`scripts/gen-icon.mjs`）。
 
 ## 架构
@@ -164,7 +164,7 @@ node scripts/install-profile.mjs web
 
 ## 版本
 
-当前版本 **v0.7.2**（对齐 dsh 0.1.7-alpha.1）。每次发版的变更详见 [CHANGELOG.md](./CHANGELOG.md)。面板顶部会显示实际运行的版本号（读自 `package.json`），跟这里对齐即可（`pnpm run check:version` 会在冒烟链里校验三处一致）。
+当前版本 **v0.7.3**（对齐 dsh 0.1.7-alpha.1）。每次发版的变更详见 [CHANGELOG.md](./CHANGELOG.md)。面板顶部会显示实际运行的版本号（读自 `package.json`），跟这里对齐即可（`pnpm run check:version` 会在冒烟链里校验三处一致）。
 
 ## License
 

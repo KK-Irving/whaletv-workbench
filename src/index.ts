@@ -532,7 +532,9 @@ async function runUpdate(ctx: Context): Promise<WorkbenchUpdateResult> {
 async function runUpdatePipeline(ctx: Context): Promise<WorkbenchUpdateResult> {
   const before = await git(['rev-parse', 'HEAD'])
   if (before === undefined) {
-    return { ok: false, error: '插件目录不是 git 仓库（git rev-parse 失败）。请先在本目录 git init 并关联远程仓库，或直接编辑源码后手动运行 pnpm run bundle。' }
+    // Tarball install: the panel hides the update entry for this case; the
+    // message stays for direct API calls.
+    return { ok: false, error: '插件目录不是 git 仓库（应用内安装副本）。更新方式：在 dsh 桌面端的插件管理界面重装本插件；git 检出安装则检查远程仓库配置后重试。' }
   }
   const remote = await git(['remote', 'get-url', 'origin'])
   if (remote === undefined || remote.trim() === '') {
@@ -591,7 +593,12 @@ async function runUpdatePipeline(ctx: Context): Promise<WorkbenchUpdateResult> {
 async function runUpdateCheck(skippedHead: string): Promise<WorkbenchUpdateCheckResult> {
   const branch = await git(['rev-parse', '--abbrev-ref', 'HEAD'])
   if (branch === undefined) {
-    return { ok: false, upToDate: false, error: '插件目录不是 git 仓库，无法检查更新。请先关联远程仓库。' }
+    // Tarball install (dsh desktop app / `plugin add github:`): no .git, so
+    // git-based checking can never work here. Point at the real update path.
+    return {
+      ok: false, upToDate: false,
+      error: '当前是应用内安装的副本（无 .git）。更新方式：在 dsh 桌面端的插件管理界面重装本插件，即可获取最新版本；检查更新/一键更新仅对 git 检出安装有效。',
+    }
   }
   let upstream = branch === 'HEAD'
     ? undefined
