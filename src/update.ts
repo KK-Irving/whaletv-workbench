@@ -269,53 +269,26 @@ function isSemverGt(latest: string, installed: string): boolean {
 }
 
 /**
- * Tarball update (roadmap v0.7.4): hand the update to the host's own plugin
- * manager — `installBundle('github:<repo>')` re-resolves the default branch's
- * latest commit, installs through the same pnpm pipeline as `dsh plugin`,
- * re-selects the bundle, and reports `restart-required` for an existing
- * dependency. `approvedBuilds` keeps older scripted releases installable.
- */
-
-/**
- * Tarball update (roadmap v0.7.4): hand the update to the host's own plugin
- * manager — `installBundle('github:<repo>')` re-resolves the default branch's
- * latest commit, installs through the same pnpm pipeline as `dsh plugin`,
- * re-selects the bundle, and reports `restart-required` for an existing
- * dependency. `approvedBuilds` keeps older scripted releases installable.
+ * Tarball update (v0.7.4 → redesigned in v0.8.0): run `pnpm add github:<repo>`
+ * directly in the profile directory. This bypasses the dsh plugin-manager's
+ * `installBundle` — which mis-reports a same-version re-add as
+ * `ambiguous-install` — and just does what we need: re-resolve the latest
+ * commit, update the lockfile, and hot-inject the client bundle.
  */
 async function runTarballUpdate(ctx: Context, repo: string): Promise<WorkbenchUpdateResult> {
-  const manager = pluginManagerLike(ctx)
-  if (manager?.installBundle === undefined) {
-    return {
-      ok: false, tarball: true,
-      error: '当前 dsh 未提供插件管理器服务，无法在线更新。请在桌面端的插件管理界面重装本插件以更新。',
-    }
-  }
+  // Derive the profile directory from our own package path:
+  // PACKAGE_DIR = <profile>/node_modules/whaletv-workbench
+  const profileDir = join(PACKAGE_DIR, '..', '..')
   const spec = `github:${repo}`
   try {
-    const change = await manager.installBundle(spec, { approvedBuilds: ['whaletv-workbench'] })
-    if (change.application === 'failed' || change.error !== undefined) {
-      // Capture every diagnostic field the manager exposes — the caller
-      // should never see a bare "failed" without knowing why.
-      const parts = [
-        change.error?.diagnostic,
-        change.error?.code,
-        change.failedAt ? `失败阶段: ${change.failedAt}` : undefined,
-        change.packageResult?.output,
-        change.packageResult?.kind ? `类型: ${change.packageResult.kind}` : undefined,
-      ].filter((s): s is string => typeof s === 'string' && s !== '')
-      const detail = truncate(parts.length > 0 ? parts.join('\n') : JSON.stringify(change, null, 2))
-      return { ok: false, tarball: true, error: `插件管理器安装失败：${detail}` }
-    }
-    const application = change.application === 'restart-required'
-      ? '重启 dsh 后新版本生效'
-      : `application: ${change.application}`
+    const output = await run('pnpm', ['add', spec], profileDir)
+    ctx.clientModules.rebuilt(CLIENT_ID)
     return {
-      ok: true, tarball: true, needRestart: true, changed: change.changed,
-      output: truncate(`已通过 dsh 插件管理器安装 ${spec}。\napplication: ${change.application}\n${application}。`),
+      ok: true, tarball: true, needRestart: true, changed: true,
+      output: truncate(`$ pnpm add ${spec} (cwd: ${profileDir})\n${output}\n\n已通过 pnpm 安装新版本；重启 dsh 后生效。`),
     }
   } catch (error) {
-    return { ok: false, tarball: true, error: truncate(String(error instanceof Error ? error.message : error)) }
+    return { ok: false, tarball: true, error: truncate(`pnpm add ${spec} 失败：${String(error instanceof Error ? error.message : error)}`) }
   }
 }
 
