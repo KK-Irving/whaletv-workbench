@@ -12,7 +12,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { DragEvent, MouseEvent } from 'react'
-import { Button, Input } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, Input, Modal, useModalLayer } from '@deepseek-ai/dsh-client-ui-primitives'
 import clsx from 'clsx'
 import type { WorkbenchPanelProps } from './contract.ts'
 import type {
@@ -60,17 +60,35 @@ function takeReopenAfterRebuild(): boolean {
   return Number.isFinite(at) && Date.now() - at <= REOPEN_FLAG_TTL_MS
 }
 
-/** The one action label each entry kind drives. */
-function actionLabel(item: WorkbenchItem): string {
-  if (item.url !== undefined && item.url !== '') return '打开网页'
-  if (item.path !== undefined && item.path !== '') return '打开'
-  if (item.prompt !== undefined && item.prompt !== '') return '在会话中使用'
-  return '未配置'
+/** The one configured target of an entry, or null when nothing is set. */
+type EntryTarget =
+  | { kind: 'url'; value: string }
+  | { kind: 'path'; value: string }
+  | { kind: 'prompt'; value: string }
+
+/**
+ * Resolve an entry's action target — THE single source of truth for the
+ * url/path/prompt precedence. The old code derived "configured" from a
+ * comparison against the Chinese button label, so a copy tweak silently
+ * changed behaviour.
+ */
+function entryTarget(item: WorkbenchItem): EntryTarget | null {
+  if (item.url !== undefined && item.url !== '') return { kind: 'url', value: item.url }
+  if (item.path !== undefined && item.path !== '') return { kind: 'path', value: item.path }
+  if (item.prompt !== undefined && item.prompt !== '') return { kind: 'prompt', value: item.prompt }
+  return null
+}
+
+/** Fixed label per target kind — each rendered button names its own action. */
+const TARGET_LABEL: Record<EntryTarget['kind'], string> = {
+  url: '打开网页',
+  path: '打开',
+  prompt: '在会话中使用',
 }
 
 /** Whether an entry has any configured target. */
 function isConfigured(item: WorkbenchItem): boolean {
-  return actionLabel(item) !== '未配置'
+  return entryTarget(item) !== null
 }
 
 /** Entry target kinds the edit form offers. */
@@ -178,6 +196,26 @@ function moveItem(
   return { groups }
 }
 
+/**
+ * Move one item by `delta` slots inside its own group — the keyboard-reachable
+ * counterpart of drag-and-drop (drag is pointer-only). Returns null when the
+ * move would fall off either end.
+ */
+function moveWithinGroup(
+  config: WorkbenchConfig, groupId: string, itemId: string, delta: number,
+): WorkbenchConfig | null {
+  const group = config.groups.find(candidate => candidate.id === groupId)
+  if (group === undefined) return null
+  const index = group.items.findIndex(candidate => candidate.id === itemId)
+  const target = index + delta
+  if (index < 0 || target < 0 || target >= group.items.length) return null
+  const items = [...group.items]
+  const [moved] = items.splice(index, 1)
+  if (moved === undefined) return null
+  items.splice(target, 0, moved)
+  return { groups: config.groups.map(candidate => (candidate.id === groupId ? { ...candidate, items } : candidate)) }
+}
+
 /** Inline entry form (used for both new and existing entries). */
 function ItemForm(props: {
   draft: ItemFormDraft
@@ -250,16 +288,30 @@ function ItemCard(props: {
   onUseSkill: (prompt: string) => void
   onCopy: (prompt: string) => void
   onDragStartItem?: () => void
+  onDragEnterItem?: () => void
   onDropOnItem?: () => void
+  onDragEndItem?: () => void
+  /** Keyboard-reachable reorder (drag is pointer-only). */
+  onMoveBy?: (delta: number) => void
+  canMoveUp?: boolean
+  canMoveDown?: boolean
+  /** This card is the one being dragged right now. */
+  dragging?: boolean
+  /** A drag is hovering this card (drop inserts before it). */
+  dropTarget?: boolean
 }) {
   const {
     item, editMode, editing, draft, saving, highlight, health,
     onDraftChange, onSaveDraft, onCancelDraft, onEdit, onDelete,
     onOpenUrl, onOpenPath, onUseSkill, onCopy,
-    onDragStartItem, onDropOnItem,
+    onDragStartItem, onDragEnterItem, onDropOnItem, onDragEndItem,
+    onMoveBy, canMoveUp, canMoveDown, dragging, dropTarget,
   } = props
+  const url = item.url ?? ''
+  const path = item.path ?? ''
+  const prompt = item.prompt ?? ''
   const configured = isConfigured(item)
-  const iconSrc = item.url !== undefined && item.url !== '' ? iconSrcFor(item.url) : ''
+  const iconSrc = url !== '' ? iconSrcFor(url) : ''
 
   const head = (
     <div className={css.itemHead}>
@@ -288,7 +340,11 @@ function ItemCard(props: {
         draggable: true,
         onDragStart: () => { onDragStartItem?.() },
         onDragOver: (event: DragEvent<HTMLDivElement>) => { event.preventDefault() },
+        onDragEnter: () => { onDragEnterItem?.() },
         onDrop: () => { onDropOnItem?.() },
+        // dragend fires even when the drop landed outside every target — the
+        // parent's drag state stayed dirty (stuck ghost highlight) without it.
+        onDragEnd: () => { onDragEndItem?.() },
       }
     : {}
   if (editing) {
@@ -302,7 +358,12 @@ function ItemCard(props: {
   return (
     <div
       {...dragHandlers}
-      className={clsx(css.item, highlight === true && css.itemActive)}
+      className={clsx(
+        css.item,
+        highlight === true && css.itemActive,
+        dragging === true && css.itemDragging,
+        dropTarget === true && css.itemDropTarget,
+      )}
       data-wb-item={item.id}
     >
       {head}
@@ -310,24 +371,26 @@ function ItemCard(props: {
         && <p className={css.itemDesc}>{item.description}</p>}
       {editMode ? (
         <div className={css.itemActions}>
+          <Button size="sm" variant="outline" onClick={() => { onMoveBy?.(-1) }} disabled={saving || canMoveUp !== true} aria-label="上移">↑</Button>
+          <Button size="sm" variant="outline" onClick={() => { onMoveBy?.(1) }} disabled={saving || canMoveDown !== true} aria-label="下移">↓</Button>
           <Button size="sm" variant="outline" onClick={onEdit} disabled={saving}>编辑</Button>
           <Button size="sm" variant="outline" className={css.danger} onClick={onDelete} disabled={saving}>删除</Button>
         </div>
       ) : (
         <div className={css.itemActions}>
-          {item.url !== undefined && item.url !== '' && (
-            <Button size="sm" variant="outline" onClick={() => { onOpenUrl(item.url!) }}>{actionLabel(item)}</Button>
+          {url !== '' && (
+            <Button size="sm" variant="outline" onClick={() => { onOpenUrl(url) }}>{TARGET_LABEL.url}</Button>
           )}
-          {item.path !== undefined && item.path !== '' && (
-            <Button size="sm" variant="outline" onClick={() => { onOpenPath(item.path!) }}>{actionLabel(item)}</Button>
+          {path !== '' && (
+            <Button size="sm" variant="outline" onClick={() => { onOpenPath(path) }}>{TARGET_LABEL.path}</Button>
           )}
-          {item.prompt !== undefined && item.prompt !== '' && (
+          {prompt !== '' && (
             <>
-              <Button size="sm" variant="outline" onClick={() => { onUseSkill(item.prompt!) }}>{actionLabel(item)}</Button>
-              <Button size="sm" onClick={() => { onCopy(item.prompt!) }}>复制提示词</Button>
+              <Button size="sm" variant="outline" onClick={() => { onUseSkill(prompt) }}>{TARGET_LABEL.prompt}</Button>
+              <Button size="sm" onClick={() => { onCopy(prompt) }}>复制提示词</Button>
             </>
           )}
-          {!configured && <Button size="sm" disabled>{actionLabel(item)}</Button>}
+          {!configured && <Button size="sm" disabled>未配置</Button>}
         </div>
       )}
     </div>
@@ -434,6 +497,54 @@ function UpdateCheckBanner(props: {
   )
 }
 
+/**
+ * One in-panel confirmation request. `cancelLabel: null` renders an
+ * information-only dialog (the old window.alert sites).
+ */
+interface ConfirmRequest {
+  title: string
+  description: string
+  confirmLabel: string
+  cancelLabel: string | null
+  /** Destructive action: confirms with the danger tone. */
+  danger?: boolean
+  onConfirm: () => void
+}
+
+/**
+ * dsh-native replacement for window.confirm / window.alert: themed, escaped
+ * by the modal layer, and it returns focus to the invoking control (the
+ * native dialogs block the page and ignore the product's own styling).
+ */
+function ConfirmDialog({ request, onClose }: { request: ConfirmRequest | null; onClose: () => void }) {
+  if (request === null) return null
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={request.title}
+      description={request.description}
+      closeLabel="关闭"
+      footer={(
+        <>
+          {request.cancelLabel !== null && (
+            <Button size="sm" variant="outline" onClick={onClose}>{request.cancelLabel}</Button>
+          )}
+          <Button
+            size="sm"
+            variant="primary"
+            className={request.danger === true ? css.danger : undefined}
+            data-modal-autofocus
+            onClick={() => { onClose(); request.onConfirm() }}
+          >
+            {request.confirmLabel}
+          </Button>
+        </>
+      )}
+    />
+  )
+}
+
 /** The workbench dashboard (see module doc). */
 export function WorkbenchPanel({
   useStore,
@@ -487,6 +598,22 @@ export function WorkbenchPanel({
   const [activeIndex, setActiveIndex] = useState<number | null>(null)
   /** Item currently being drag-reordered (P2-15). */
   const dragRef = useRef<{ groupId: string; itemId: string } | null>(null)
+  /** Drag visuals: the source card and the current hover target. */
+  const [draggingId, setDraggingId] = useState<string | null>(null)
+  const [dragOverId, setDragOverId] = useState<string | null>(null)
+  const [dragOverGroupId, setDragOverGroupId] = useState<string | null>(null)
+  /** The one open confirmation dialog (replaces window.confirm/alert). */
+  const [confirmRequest, setConfirmRequest] = useState<ConfirmRequest | null>(null)
+  /** Dialog element: the modal layer owns Escape, Tab trapping and focus return. */
+  const panelRef = useRef<HTMLElement | null>(null)
+
+  const askConfirm = useCallback((request: ConfirmRequest) => { setConfirmRequest(request) }, [])
+  const closeConfirm = useCallback(() => { setConfirmRequest(null) }, [])
+  const closePanel = useCallback(() => { actions.setOpen(false) }, [actions])
+  // Escape + focus trap + return-to-invoker focus, from dsh's own modal layer.
+  // The panel announces itself as a real dialog so nested dialogs (the
+  // confirmation Modal) take the foreground first.
+  useModalLayer(panelRef, open, closePanel)
 
   // Auto-dismiss timer for the "already up to date" notification (no log to
   // read → 5s countdown). Cleared on manual ✕, next update start, or unmount.
@@ -625,11 +752,8 @@ export function WorkbenchPanel({
     await runCheck()
   }, [actions, skipUpdate, runCheck])
 
-  /** Reset to the state before the last successful update (P1-9). */
-  const runRollback = useCallback(async () => {
-    const previous = updateHistory?.find(entry => entry.ok === true && entry.changed === true)
-    if (previous === undefined) return
-    if (!window.confirm(`回滚到更新前（${previous.before ?? '?'}）？工作区不能有未提交修改。`)) return
+  /** Apply the rollback (the confirmation dialog's onConfirm). */
+  const performRollback = useCallback(async () => {
     clearDismissTimer()
     actions.setUpdating(true)
     actions.setUpdateLog('')
@@ -654,7 +778,21 @@ export function WorkbenchPanel({
     } finally {
       actions.setUpdating(false)
     }
-  }, [actions, rollbackUpdate, reload, reloadHistory, updateHistory, clearDismissTimer])
+  }, [actions, rollbackUpdate, reload, reloadHistory, clearDismissTimer])
+
+  /** Reset to the state before the last successful update (P1-9). */
+  const runRollback = useCallback(() => {
+    const previous = updateHistory?.find(entry => entry.ok === true && entry.changed === true)
+    if (previous === undefined) return
+    askConfirm({
+      title: '回滚到更新前',
+      description: `将把工作区重置到 ${previous.before ?? '?'}。工作区有未提交修改时回滚会被拒绝。`,
+      confirmLabel: '回滚',
+      cancelLabel: '取消',
+      danger: true,
+      onConfirm: () => { void performRollback() },
+    })
+  }, [updateHistory, askConfirm, performRollback])
 
   /** Persist a whole config; on success re-read state from the Host. */
   const persistConfig = useCallback(async (next: WorkbenchConfig): Promise<boolean> => {
@@ -710,9 +848,19 @@ export function WorkbenchPanel({
     if (await persistConfig(next)) setEditing(null)
   }
 
-  const deleteItem = async (groupId: string, item: WorkbenchItem): Promise<void> => {
+  const deleteItem = (groupId: string, item: WorkbenchItem): void => {
     if (state === null) return
-    if (!window.confirm(`删除条目「${item.title}」？`)) return
+    askConfirm({
+      title: '删除条目',
+      description: `确定删除「${item.title}」？此操作立即写入 workbench.json。`,
+      confirmLabel: '删除',
+      cancelLabel: '取消',
+      danger: true,
+      onConfirm: () => { void performDeleteItem(groupId, item) },
+    })
+  }
+  const performDeleteItem = async (groupId: string, item: WorkbenchItem): Promise<void> => {
+    if (state === null) return
     const next: WorkbenchConfig = {
       groups: state.config.groups.map(group => (
         group.id !== groupId ? group : { ...group, items: group.items.filter(i => i.id !== item.id) }
@@ -740,9 +888,19 @@ export function WorkbenchPanel({
       setGroupTitleDraft('')
     }
   }
-  const deleteGroup = async (group: WorkbenchGroup): Promise<void> => {
+  const deleteGroup = (group: WorkbenchGroup): void => {
     if (state === null) return
-    if (!window.confirm(`删除分组「${group.title}」及其 ${group.items.length} 个条目？`)) return
+    askConfirm({
+      title: '删除分组',
+      description: `确定删除分组「${group.title}」及其 ${group.items.length} 个条目？`,
+      confirmLabel: '删除',
+      cancelLabel: '取消',
+      danger: true,
+      onConfirm: () => { void performDeleteGroup(group) },
+    })
+  }
+  const performDeleteGroup = async (group: WorkbenchGroup): Promise<void> => {
+    if (state === null) return
     const next: WorkbenchConfig = { groups: state.config.groups.filter(g => g.id !== group.id) }
     if (await persistConfig(next)) {
       if (editing !== null && editing.groupId === group.id) setEditing(null)
@@ -784,14 +942,6 @@ export function WorkbenchPanel({
     void reloadHistory()
     void reloadUsage()
   }, [open, reload, reloadSkills, reloadHistory])
-  useEffect(() => {
-    if (!open) return
-    const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') actions.setOpen(false)
-    }
-    window.addEventListener('keydown', onKeyDown)
-    return () => { window.removeEventListener('keydown', onKeyDown) }
-  }, [open, actions])
 
   // Alt+W toggles the panel from anywhere on the page (roadmap P2-13).
   useEffect(() => {
@@ -844,7 +994,13 @@ export function WorkbenchPanel({
       return
     }
     if (result.reason === 'no-session') {
-      window.alert('请先打开或新建一个会话，再从工作台引用技能。')
+      askConfirm({
+        title: '无法引用技能',
+        description: '请先打开或新建一个会话，再从工作台引用技能。',
+        confirmLabel: '知道了',
+        cancelLabel: null,
+        onConfirm: () => { /* informational only */ },
+      })
     }
   }
 
@@ -859,18 +1015,18 @@ export function WorkbenchPanel({
 
   /** Run one entry's action through its configured kind, counting the launch (P2-12). */
   const runItemAction = (item: WorkbenchItem): void => {
+    const target = entryTarget(item)
+    if (target === null) return
     void recordUsage(item.id).then(() => { void reloadUsage() })
-    if (item.url !== undefined && item.url !== '') {
-      openUrl(item.url)
+    if (target.kind === 'url') {
+      openUrl(target.value)
       return
     }
-    if (item.path !== undefined && item.path !== '') {
-      void handleOpenPath(item.path)
+    if (target.kind === 'path') {
+      void handleOpenPath(target.value)
       return
     }
-    if (item.prompt !== undefined && item.prompt !== '') {
-      void handleUseSkill(item.prompt)
-    }
+    void handleUseSkill(target.value)
   }
 
   /** Probe every entry's reachability and badge the cards (roadmap P2-16). */
@@ -887,26 +1043,42 @@ export function WorkbenchPanel({
 
   // Drag-reorder plumbing (roadmap P2-15): the payload rides a ref (no data
   // transfer needed inside one document); drops land on a card (insert
-  // before it) or a group body (append).
+  // before it) or a group body (append). The visible drag state lives in
+  // React state so the source card and the hover target can be styled, and
+  // dragend clears everything even when the drop missed every target.
+  const clearDragState = (): void => {
+    dragRef.current = null
+    setDraggingId(null)
+    setDragOverId(null)
+    setDragOverGroupId(null)
+  }
   const handleDragStartItem = (groupId: string, itemId: string): void => {
     dragRef.current = { groupId, itemId }
+    setDraggingId(itemId)
   }
   const handleDropOnItem = async (targetGroupId: string, targetItem: WorkbenchItem): Promise<void> => {
     const drag = dragRef.current
-    dragRef.current = null
+    clearDragState()
     if (state === null || drag === null || drag.itemId === targetItem.id) return
     const next = moveItem(state.config, drag, targetGroupId, targetItem.id)
     if (next !== null) await persistConfig(next)
   }
   const handleDropOnGroup = async (targetGroupId: string): Promise<void> => {
     const drag = dragRef.current
-    dragRef.current = null
+    clearDragState()
     if (state === null || drag === null || drag.groupId === targetGroupId) return
     const next = moveItem(state.config, drag, targetGroupId, null)
     if (next !== null) await persistConfig(next)
   }
+
+  /** Keyboard-reachable reorder: shift one entry inside its own group. */
+  const moveItemBy = async (groupId: string, item: WorkbenchItem, delta: number): Promise<void> => {
+    if (state === null) return
+    const next = moveWithinGroup(state.config, groupId, item.id, delta)
+    if (next !== null) await persistConfig(next)
+  }
   const onBackdrop = (event: MouseEvent<HTMLDivElement>): void => {
-    if (event.target === event.currentTarget) actions.setOpen(false)
+    if (event.target === event.currentTarget) closePanel()
   }
 
   // Search projection + flat match list live before the early return so the
@@ -937,10 +1109,20 @@ export function WorkbenchPanel({
 
   return (
     <div className={css.backdrop} onClick={onBackdrop} data-whaletv-workbench>
-      <section className={css.panel} aria-label="WhaleTV 工作台">
+      {/* role=dialog + aria-modal put this panel into dsh's own modal layer:
+          Escape/Tab ownership, focus trapping and return-to-invoker focus all
+          come from useModalLayer, and nested dialogs (the confirm Modal) take
+          the foreground first. */}
+      <section
+        ref={panelRef}
+        className={css.panel}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="whaletv-workbench-title"
+      >
         <header className={css.header}>
           <img src={WORKBENCH_ICON} alt="" className={css.icon} />
-          <h1 className={css.title}>WhaleTV 工作台</h1>
+          <h1 className={css.title} id="whaletv-workbench-title">WhaleTV 工作台</h1>
           <span className={css.version}>v{state?.version ?? '…'}</span>
           <span className={css.spacer} />
           {state?.git.configured === true && (
@@ -970,7 +1152,7 @@ export function WorkbenchPanel({
           <Button size="sm" variant={editMode ? 'primary' : 'outline'} onClick={toggleEditMode} disabled={updating || saving}>
             {editMode ? '完成' : '编辑'}
           </Button>
-          <Button size="sm" onClick={() => { actions.setOpen(false) }} aria-label="关闭工作台">✕</Button>
+          <Button size="sm" onClick={closePanel} aria-label="关闭工作台">✕</Button>
         </header>
 
         {loadError !== null && (
@@ -1013,6 +1195,7 @@ export function WorkbenchPanel({
 
         <div className={css.search}>
           <Input
+            data-modal-autofocus
             placeholder="搜索网页 / 文档 / 应用 / 技能…（↑↓ 选择，Enter 打开）"
             value={search}
             onChange={event => {
@@ -1029,7 +1212,15 @@ export function WorkbenchPanel({
                 setActiveIndex(prev => prev === null ? flatMatches.length - 1 : Math.max(prev - 1, 0))
               } else if (event.key === 'Enter') {
                 event.preventDefault()
-                const hit = flatMatches[effectiveActive ?? 0]
+                // First Enter with nothing highlighted only MOVES the cursor:
+                // executing straight away would launch a local program (path
+                // entries) from a stray Enter right after typing. The second
+                // Enter runs the highlighted entry.
+                if (effectiveActive === null) {
+                  setActiveIndex(0)
+                  return
+                }
+                const hit = flatMatches[effectiveActive]
                 if (hit !== undefined) runItemAction(hit)
               }
             }}
@@ -1089,8 +1280,18 @@ export function WorkbenchPanel({
                 </div>
               )}
               <div
-                className={css.grid}
-                onDragOver={event => { if (editMode) event.preventDefault() }}
+                className={clsx(css.grid, dragOverGroupId === group.id && css.gridDropActive)}
+                onDragOver={event => {
+                  if (!editMode) return
+                  event.preventDefault()
+                  if (draggingId !== null && dragOverGroupId !== group.id) setDragOverGroupId(group.id)
+                }}
+                onDragLeave={event => {
+                  // Leaving the body (not just crossing an inner card) clears
+                  // the highlight; relatedTarget inside the grid is not a leave.
+                  if (event.currentTarget.contains(event.relatedTarget as Node | null)) return
+                  setDragOverGroupId(prev => (prev === group.id ? null : prev))
+                }}
                 onDrop={() => { if (editMode) void handleDropOnGroup(group.id) }}
               >
                 {group.items.map(item => (
@@ -1103,6 +1304,11 @@ export function WorkbenchPanel({
                     saving={saving}
                     highlight={activeItemId === item.id}
                     health={health !== null ? health[item.id] : undefined}
+                    dragging={draggingId === item.id}
+                    dropTarget={dragOverId === item.id}
+                    canMoveUp={group.items[0]?.id !== item.id}
+                    canMoveDown={group.items[group.items.length - 1]?.id !== item.id}
+                    onMoveBy={delta => { void moveItemBy(group.id, item, delta) }}
                     onDraftChange={patch => {
                       setEditing(prev => prev === null ? prev : { ...prev, draft: { ...prev.draft, ...patch } })
                     }}
@@ -1115,7 +1321,9 @@ export function WorkbenchPanel({
                     onUseSkill={prompt => { void handleUseSkill(prompt) }}
                     onCopy={prompt => { void handleCopy(prompt) }}
                     onDragStartItem={() => { handleDragStartItem(group.id, item.id) }}
+                    onDragEnterItem={() => { setDragOverId(item.id) }}
                     onDropOnItem={() => { void handleDropOnItem(group.id, item) }}
+                    onDragEndItem={clearDragState}
                   />
                 ))}
                 {editMode && editing !== null && editing.groupId === group.id && editing.itemId === null && (
@@ -1172,7 +1380,7 @@ export function WorkbenchPanel({
                   上次成功更新 {lastOkUpdate.time.slice(0, 16).replace('T', ' ')}
                   （{lastOkUpdate.before ?? '?'} → {lastOkUpdate.after ?? '?'}）
                 </span>
-                <Button size="sm" variant="outline" onClick={() => { void runRollback() }} disabled={updating || saving}>
+                <Button size="sm" variant="outline" onClick={runRollback} disabled={updating || saving}>
                   回滚上一版本
                 </Button>
               </div>
@@ -1180,6 +1388,7 @@ export function WorkbenchPanel({
           </footer>
         )}
       </section>
+      <ConfirmDialog request={confirmRequest} onClose={closeConfirm} />
     </div>
   )
 }

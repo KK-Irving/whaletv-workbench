@@ -163,7 +163,9 @@
   border: 1px solid var(--dsw-alias-border-l1);
   border-radius: 12px;
   background: var(--dsw-alias-bg-base);
-  height: 120px;
+  /* min-height, not height: an entry may carry url + path + prompt buttons
+     (hand-edited JSON) and the fixed height used to clip them. */
+  min-height: 120px;
   overflow: hidden;
 }
 
@@ -206,6 +208,7 @@
   color: var(--dsw-alias-label-tertiary);
   display: -webkit-box;
   -webkit-line-clamp: 2;
+  line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
@@ -258,7 +261,8 @@
 }
 
 .danger {
-  color: #e5484d;
+  /* Token-first: the theme owns the danger hue in both light and dark. */
+  color: var(--dsw-alias-state-error-label, #e5484d);
 }
 
 .editBar {
@@ -593,6 +597,23 @@
   width: 16px;
   height: 16px;
   border-radius: 3px;
+}
+
+/* Drag-reorder affordances (roadmap P2-15): the source card dims, the hovered
+   drop target gets an insertion bar, and the group body lights up while a drag
+   is over it. */
+.itemDragging {
+  opacity: 0.45;
+}
+
+.itemDropTarget {
+  box-shadow: inset 0 3px 0 0 var(--dsw-alias-label-primary);
+}
+
+.gridDropActive {
+  outline: 1px dashed var(--dsw-alias-border-l3);
+  outline-offset: 4px;
+  border-radius: 12px;
 }
 
 /* Search keyboard-navigation cursor (roadmap P2-14). */

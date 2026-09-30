@@ -2,6 +2,45 @@
 
 Notable changes per version. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) loosely; pre-1.0 minor bumps carry feature-level changes because the API surface is still shaping up.
 
+## 0.8.5 — 2026-09-30
+
+Interaction-safety release: the panel now behaves like a real dialog,
+destructive actions confirm in-product, and reordering is reachable without
+a mouse.
+
+### Fixed
+
+- **A first Enter in the search box ran the top match.** With nothing
+  highlighted, a stray Enter right after typing could launch a local program
+  (path entries). The first Enter now only moves the cursor; the second runs
+  the highlighted entry.
+- **Multi-target entries lied about their button.** A hand-edited item
+  carrying url + prompt rendered two buttons that both read 「打开网页」
+  while one of them ran the skill action. Each target now renders its own
+  fixed label, and the url/path/prompt precedence lives in one
+  `entryTarget()` helper (the old code derived "configured" by comparing a
+  Chinese label, so a copy tweak silently changed behaviour).
+- **Drag state could stick.** `dragend` never cleared the drag ref, so a drop
+  outside every target left the highlight behind. Drags now dim the source
+  card, draw an insertion bar on the hovered target and outline the group
+  body.
+
+### Added
+
+- **Real dialog semantics for the panel** — `role="dialog"` + `aria-modal`,
+  routed through dsh's own modal layer (`useModalLayer`): Escape closes the
+  panel, Tab is trapped inside it, the search box takes initial focus, focus
+  returns to the invoking control on close, and a nested dialog takes Escape
+  first.
+- **In-product confirmations** — the `window.confirm` ×3 and `window.alert`
+  sites became a themed `Modal` (`ConfirmDialog`), with the danger tone on
+  destructive actions.
+- **Keyboard reorder** — ↑/↓ buttons per entry in edit mode (drag was
+  pointer-only), disabled automatically at the group's edges.
+- Small CSS fixes: `.danger` uses the theme's error token, `.item` is
+  `min-height` so multiple action buttons cannot clip, and `line-clamp` now
+  ships alongside its `-webkit-` counterpart.
+
 ## 0.8.4 — 2026-09-30
 
 ### Fixed
