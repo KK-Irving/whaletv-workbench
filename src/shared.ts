@@ -362,3 +362,46 @@ export interface WorkbenchSessionFollowupResult {
   sessionId?: string
   error?: string
 }
+
+/**
+ * GET /whaletv/workbench/restart/plan response (roadmap ③): how this host can
+ * be restarted, and whether the panel may do it itself.
+ */
+export interface WorkbenchRestartPlan {
+  ok: boolean
+  /**
+   * True only for a plain Node CLI host the plugin can relaunch faithfully.
+   * Embedded (Electron) and service-managed (systemd) hosts report false and
+   * carry the reason in `note`.
+   */
+  relaunchable: boolean
+  /** Exact command line that started this harness — shown and copyable either way. */
+  command: string
+  /** Why self-restart is unavailable, when it is. */
+  note?: string
+}
+
+/** POST /whaletv/workbench/restart response. */
+export interface WorkbenchRestartResult {
+  ok: boolean
+  error?: string
+}
+
+/**
+ * GET /whaletv/workbench/update/progress response: the running update
+ * pipeline's current step. The panel polls this while an update is in flight
+ * so "click and wait blindly" becomes a visible stage line.
+ */
+export interface WorkbenchUpdateProgress {
+  ok: boolean
+  /** True while an update or rollback pipeline is running. */
+  running: boolean
+  /** Stage id: idle | pull | install | bundle | inject | tarball | rollback | done | failed. */
+  stage: string
+  /** Human-readable line for the panel. */
+  detail: string
+  /** ISO timestamp of the current run's start. */
+  startedAt?: string
+  /** Seconds elapsed in the current run. */
+  elapsedSeconds?: number
+}

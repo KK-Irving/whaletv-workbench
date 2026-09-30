@@ -10,8 +10,11 @@
  *                              → pnpm run bundle → ctx.clientModules.rebuilt
  *   GET  /update/check       → fetch + ahead/behind + incoming commits
  *   GET  /update/history     → rolling update-attempt log (updates.json)
+ *   GET  /update/progress    → live stage of the running update pipeline
  *   POST /update/skip        → mark the upstream head as skipped
  *   POST /update/rollback    → reset to the last update's before-SHA + rebuild
+ *   GET  /restart/plan       → can this host restart itself, and with what command
+ *   POST /restart            → relaunch the harness (loopback-only), then exit
  *   GET  /usage              → launch-count ledger (最近使用 rail)
  *   POST /usage/record       → bump one item's launch counter
  *   GET  /health             → reachability probe for every entry
@@ -61,7 +64,8 @@ import type {
 } from './shared.ts'
 
 import { PACKAGE_DIR, WORKBENCH_STATE_DIR, git, truncate, readJsonBody, cleanString, readVersion, sendJson } from './host-plumbing.ts'
-import { runUpdate, runUpdateCheck, runUpdateRollback, clearSkippedHead, readSkippedHead, readUpdateHistory, writeSkippedHead } from './update.ts'
+import { runUpdate, runUpdateCheck, runUpdateRollback, clearSkippedHead, readSkippedHead, readUpdateHistory, readUpdateProgress, writeSkippedHead } from './update.ts'
+import { buildRestartPlan, requestRestart } from './restart.ts'
 import { sweepStagingDir, registerWorkbenchSkillProvider, buildSkillList, buildSkillDebug, readInstalledRecords, upsertInstalledRecords, pruneInstalledRecords, installSkillOnDisk, importSkillFromGit, removeSkillOnDisk } from './skills.ts'
 import { readUsage, recordUsage, runHealthCheck, serveFavicon } from './extras.ts'
 
@@ -327,6 +331,20 @@ function subPath(req: IncomingMessage): string {
 }
 
 /**
+ * Whether a request came straight from the loopback interface.
+ *
+ * The restart route ends the harness process, so it accepts only a direct
+ * local caller: a proxied/forwarded request (reverse proxy, LAN gateway) must
+ * never be able to kill the host it is talking to.
+ */
+function isLoopbackRequest(req: IncomingMessage): boolean {
+  const headers = req.headers ?? {}
+  if (headers['x-forwarded-for'] !== undefined || headers['x-real-ip'] !== undefined) return false
+  const address = req.socket?.remoteAddress ?? ''
+  return address === '127.0.0.1' || address === '::1' || address === '::ffff:127.0.0.1'
+}
+
+/**
  * Register the workbench routes and the settings namespace.
  *
  * One `kind: 'prefix'` seat covers every sub-path under
@@ -495,6 +513,39 @@ export function apply(ctx: Context, config: Config): void {
             result => { sendJson(res, result.ok ? 200 : 500, result) },
             (error: unknown) => { sendJson(res, 500, { ok: false, error: String(error) }) },
           ).finally(() => { updating = false })
+          return
+        }
+
+        // GET /update/progress — the running pipeline's current stage (③).
+        if (sub === '/update/progress' && (method === undefined || method === 'GET' || method === 'HEAD')) {
+          sendJson(res, 200, readUpdateProgress())
+          return
+        }
+
+        // GET /restart/plan — how this host restarts, and whether the panel
+        // may do it itself (③). Read-only; safe to call on every panel open.
+        if (sub === '/restart/plan' && (method === undefined || method === 'GET' || method === 'HEAD')) {
+          sendJson(res, 200, buildRestartPlan())
+          return
+        }
+
+        // POST /restart — relaunch the harness. Loopback-only and never
+        // proxied: this ends the current process, so a forwarded request must
+        // not be able to trigger it.
+        if (sub === '/restart') {
+          if (method !== 'POST') {
+            sendJson(res, 405, { ok: false, error: '仅支持 POST 请求' })
+            return
+          }
+          if (!isLoopbackRequest(req)) {
+            sendJson(res, 403, { ok: false, error: '只接受本机回环地址的重启请求' })
+            return
+          }
+          const plan = buildRestartPlan()
+          const started = requestRestart(plan)
+          // The response must reach the browser BEFORE the process exits; the
+          // exit itself is scheduled by requestRestart.
+          sendJson(res, started.ok ? 200 : 400, { ok: started.ok, ...(started.error !== undefined ? { error: started.error } : {}) })
           return
         }
 

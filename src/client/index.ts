@@ -31,12 +31,13 @@ import { writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives'
 import type {} from '@deepseek-ai/dsh-client-ui-workspace/client'
 import type { WorkbenchInjected } from './contract.ts'
 import type {
-  WorkbenchConfigSaveResult, WorkbenchHealth, WorkbenchSessionFollowupResult,
+  WorkbenchConfigSaveResult, WorkbenchHealth, WorkbenchRestartPlan, WorkbenchRestartResult,
+  WorkbenchSessionFollowupResult,
   WorkbenchSkillImportRequest, WorkbenchSkillImportResult, WorkbenchSkillInstallRequest,
   WorkbenchSkillInstallResult, WorkbenchSkillList, WorkbenchSkillRemoveResult,
   WorkbenchSkillUpdateResult, WorkbenchState,
-  WorkbenchUpdateCheckResult, WorkbenchUpdateHistory, WorkbenchUpdateResult,
-  WorkbenchUpdateRollbackResult, WorkbenchUpdateSkipResult, WorkbenchUsage,
+  WorkbenchUpdateCheckResult, WorkbenchUpdateHistory, WorkbenchUpdateProgress,
+  WorkbenchUpdateResult, WorkbenchUpdateRollbackResult, WorkbenchUpdateSkipResult, WorkbenchUsage,
   WorkbenchUsageRecordResult,
 } from '../shared.ts'
 import { createWorkbenchStore } from './store.ts'
@@ -136,6 +137,9 @@ export function apply(ctx: ClientContext): void {
     update: () => fetchJson<WorkbenchUpdateResult>('/whaletv/workbench/update', { method: 'POST' }),
     checkUpdate: () => fetchJson<WorkbenchUpdateCheckResult>('/whaletv/workbench/update/check'),
     loadUpdateHistory: () => fetchJson<WorkbenchUpdateHistory>('/whaletv/workbench/update/history'),
+    loadProgress: () => fetchJson<WorkbenchUpdateProgress>('/whaletv/workbench/update/progress'),
+    restartPlan: () => fetchJson<WorkbenchRestartPlan>('/whaletv/workbench/restart/plan'),
+    restart: () => fetchJson<WorkbenchRestartResult>('/whaletv/workbench/restart', { method: 'POST' }),
     skipUpdate: (sha: string) =>
       fetchJson<WorkbenchUpdateSkipResult>('/whaletv/workbench/update/skip', {
         method: 'POST',

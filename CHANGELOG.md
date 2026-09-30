@@ -2,6 +2,40 @@
 
 Notable changes per version. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) loosely; pre-1.0 minor bumps carry feature-level changes because the API surface is still shaping up.
 
+## 0.8.9 — 2026-09-30
+
+Update-loop release (roadmap ③): restart from the panel, watch the update
+progress, read the whole history.
+
+### Added
+
+- **一键重启 dsh（面板内）** — the update flow kept telling users to restart
+  the harness by hand. `GET /restart/plan` reports how this host can be
+  restarted and whether the panel may do it; `POST /restart` (loopback-only,
+  forwarded requests refused) writes a detached helper into the plugin's own
+  state directory, answers the request, then exits. The helper waits for the
+  process to die, gives a supervising launcher a few seconds to bring the
+  harness back, and only then starts the replacement itself. Embedded
+  (Electron) and service-managed (systemd) hosts report `relaunchable: false`
+  and receive the exact command to copy instead of a button that would kill
+  the app. The panel shows a 重启中… overlay, polls until the host answers
+  again, then reloads the page.
+- **更新进度实时反馈** — `GET /update/progress` exposes the running pipeline's
+  stage (pull → install → bundle → inject, or the tarball `pnpm add`), and the
+  panel polls it once a second while an update is in flight. A `pnpm add` used
+  to be 30+ seconds of a frozen button.
+- **完整更新历史** — the rolling `updates.json` log (time / ok / before→after /
+  needRestart / error) is expandable in the footer; the data was already on
+  the wire for the rollback affordance.
+
+### Note
+
+Smoke coverage stops at the loopback guard, the plan shape and the idle
+progress payload: actually restarting would kill the harness running the
+tests. The restart button is therefore the one path shipped without an
+end-to-end run. If the harness ever fails to come back, the tray menu's
+「重启 Web 服务」 (or rerunning `dsh web`) is the fallback.
+
 ## 0.8.8 — 2026-09-30
 
 Engineering-gate release: reproducible builds, a `lib/` drift gate, and lint.

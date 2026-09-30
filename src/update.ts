@@ -8,8 +8,8 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import type {
-  WorkbenchUpdateCheckResult, WorkbenchUpdateHistoryEntry, WorkbenchUpdateResult,
-  WorkbenchUpdateRollbackResult,
+  WorkbenchUpdateCheckResult, WorkbenchUpdateHistoryEntry, WorkbenchUpdateProgress,
+  WorkbenchUpdateResult, WorkbenchUpdateRollbackResult,
 } from './shared.ts'
 import {
   CLIENT_ID, PACKAGE_DIR, WORKBENCH_STATE_DIR, run, git, truncate, readVersion,
@@ -39,6 +39,7 @@ const UPDATE_STATE_PATH = join(WORKBENCH_STATE_DIR, 'update-state.json')
 async function runUpdate(ctx: Context, updateRepo: string): Promise<WorkbenchUpdateResult> {
   const startedAt = new Date()
   const result = await runUpdatePipeline(ctx, updateRepo)
+  setStage(result.ok ? 'done' : 'failed', result.ok ? '更新流程结束' : `更新失败：${result.error ?? '未知错误'}`)
   appendUpdateHistory({
     time: startedAt.toISOString(),
     ok: result.ok,
@@ -53,11 +54,45 @@ async function runUpdate(ctx: Context, updateRepo: string): Promise<WorkbenchUpd
 }
 
 /**
- * The update pipeline proper (no history side effects): git checkouts run
- * pull → install → bundle → hot-inject; tarball installs (no .git) hand the
- * update to the dsh plugin-manager (roadmap v0.7.4).
+ * Live stage of the running pipeline (roadmap ③). The panel polls it while an
+ * update is in flight, so a 30-second `pnpm add` is no longer a black box.
+ * Process-local on purpose: a restart clears it, and a fresh process has
+ * nothing running.
  */
+const progress: { running: boolean; stage: string; detail: string; startedAt: number } = {
+  running: false, stage: 'idle', detail: '空闲', startedAt: 0,
+}
+
+/** Move the progress pointer (called between pipeline steps). */
+function setStage(stage: string, detail: string): void {
+  progress.running = stage !== 'idle' && stage !== 'done' && stage !== 'failed'
+  progress.stage = stage
+  progress.detail = detail
+  if (progress.running && progress.startedAt === 0) progress.startedAt = Date.now()
+  if (!progress.running) progress.startedAt = 0
+}
+
+/** Snapshot for GET /update/progress. */
+function readUpdateProgress(): WorkbenchUpdateProgress {
+  return {
+    ok: true,
+    running: progress.running,
+    stage: progress.stage,
+    detail: progress.detail,
+    ...(progress.running && progress.startedAt > 0
+      ? {
+          startedAt: new Date(progress.startedAt).toISOString(),
+          elapsedSeconds: Math.round((Date.now() - progress.startedAt) / 1000),
+        }
+      : {}),
+  }
+}
+
+/** The update pipeline proper (no history side effects): git checkouts run
+ * pull → install → bundle → hot-inject; tarball installs (no .git) re-resolve
+ * the dependency with `pnpm add github:<repo>` (v0.8.1). */
 async function runUpdatePipeline(ctx: Context, updateRepo: string): Promise<WorkbenchUpdateResult> {
+  setStage('pull', '正在拉取远端提交…')
   const before = await git(['rev-parse', 'HEAD'])
   if (before === undefined) {
     return runTarballUpdate(ctx, updateRepo)
@@ -82,12 +117,16 @@ async function runUpdatePipeline(ctx: Context, updateRepo: string): Promise<Work
     let bundleOutput = ''
     let rebuilt = false
     if (changed) {
+      setStage('install', '正在安装依赖（pnpm install）…')
       installOutput = await run('pnpm', ['install', '--no-frozen-lockfile'])
       installOutput += `\n${await run(process.execPath, ['scripts/link-harness-deps.mjs'])}`
+      setStage('bundle', '正在重建 bundle（pnpm run bundle）…')
       bundleOutput = await run('pnpm', ['run', 'bundle'])
+      setStage('inject', '正在热注入客户端 bundle…')
       ctx.clientModules.rebuilt(CLIENT_ID)
       rebuilt = true
     }
+    setStage('done', changed ? '更新完成' : '已是最新')
     const output = [
       `$ git pull --ff-only\n${pullOutput}`,
       changed ? `\n$ pnpm install\n${installOutput}` : '',
@@ -224,6 +263,7 @@ async function runTarballUpdate(ctx: Context, repo: string): Promise<WorkbenchUp
   // PACKAGE_DIR = <profile>/node_modules/whaletv-workbench
   const profileDir = join(PACKAGE_DIR, '..', '..')
   const spec = `github:${repo}`
+  setStage('tarball', `正在通过 pnpm 安装 ${spec}（可能耗时数十秒）…`)
   try {
     const output = await run('pnpm', ['add', spec], profileDir)
     ctx.clientModules.rebuilt(CLIENT_ID)
@@ -361,10 +401,12 @@ async function runUpdateRollback(ctx: Context): Promise<WorkbenchUpdateRollbackR
     return { ok: false, error: '工作区有未提交的本地修改，回滚会丢弃它们；请先 commit / stash 再试。' }
   }
   const target = lastOk.before as string
+  setStage('rollback', `正在回滚到 ${target} 并重建 bundle…`)
   try {
     const resetOutput = await run('git', ['reset', '--hard', target])
     const bundleOutput = await run('pnpm', ['run', 'bundle'])
     ctx.clientModules.rebuilt(CLIENT_ID)
+    setStage('done', `已回滚到 ${target}`)
     appendUpdateHistory({
       time: new Date().toISOString(),
       ok: true,
@@ -381,6 +423,7 @@ async function runUpdateRollback(ctx: Context): Promise<WorkbenchUpdateRollbackR
     }
   } catch (error) {
     const message = truncate(String(error instanceof Error ? error.message : error))
+    setStage('failed', `回滚失败：${message}`)
     appendUpdateHistory({ time: new Date().toISOString(), ok: false, error: `rollback: ${message}` })
     return { ok: false, error: message }
   }
@@ -420,4 +463,5 @@ function clearSkippedHead(): void {
 export {
   runUpdate, runUpdateCheck, runUpdateRollback, clearSkippedHead, readSkippedHead,
   readUpdateHistory, writeSkippedHead, fetchLatestTarballVersion, parseVersionField, isSemverGt,
+  readUpdateProgress,
 }

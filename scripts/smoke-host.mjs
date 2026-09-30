@@ -10,6 +10,9 @@
  *   - GET  /skills             → 200 with the mocked catalog
  *   - GET  /nonsense           → 404 (sub-path fallthrough)
  *   - git-import / skip / icon safety boundaries → 400 with readable errors
+ *   - GET /restart/plan shape, POST /restart refusing a non-loopback caller
+ *     (the refusal must land before the helper spawns or the exit is scheduled)
+ *   - GET /update/progress answering while idle
  *
  * Uses a temp $DSH_HOME so the smoke run never touches the user's real
  * workbench state; the temp dir is removed on exit.
@@ -216,7 +219,28 @@ try {
     throw new Error(`/icon private origin should 400: ${icon.status} ${JSON.stringify(icon.body)}`)
   }
 
-  console.log('smoke-host: OK — prefix dispatch (state/config/update*/skills*/usage/health/icon/session), sanitize + persist, 405/404 + git-import/skip/icon boundaries')
+  // 11. Restart plan is readable and self-describing (roadmap ③).
+  const plan = await request('GET', '/restart/plan')
+  if (plan.status !== 200 || typeof plan.body.relaunchable !== 'boolean' || typeof plan.body.command !== 'string' || plan.body.command === '') {
+    throw new Error(`/restart/plan shape: ${plan.status} ${JSON.stringify(plan.body)}`)
+  }
+
+  // 12. The restart route refuses a request that is not a direct loopback
+  //     caller. The mock has no socket at all, so this asserts the guard —
+  //     and, critically, that the refusal happens BEFORE any helper spawn or
+  //     pending process exit (this smoke process must survive).
+  const refused = await request('POST', '/restart')
+  if (refused.status !== 403) {
+    throw new Error(`/restart from a non-loopback caller should 403: ${refused.status} ${JSON.stringify(refused.body)}`)
+  }
+
+  // 13. Update progress answers even when nothing is running.
+  const progress = await request('GET', '/update/progress')
+  if (progress.status !== 200 || typeof progress.body.stage !== 'string' || progress.body.running !== false) {
+    throw new Error(`/update/progress idle shape: ${progress.status} ${JSON.stringify(progress.body)}`)
+  }
+
+  console.log('smoke-host: OK — prefix dispatch (state/config/update*/restart/usage/health/icon/session), sanitize + persist, 405/404 + git-import/skip/icon/restart boundaries')
 } catch (error) {
   console.error('smoke-host: FAILED:', error)
   process.exitCode = 1

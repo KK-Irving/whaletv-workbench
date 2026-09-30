@@ -22,6 +22,7 @@ WhaleTV 工作台 —— DeepSeek Harness（`dsh`）的站外 Web 插件：把�
   - **诊断**：`GET /whaletv/workbench/skills/debug` 返回本地 `$DSH_HOME/skills` 路径、目录内容、相关环境变量、dsh 官方注册表 snapshot——用来定位"文件在盘上但面板看不到"的问题。
 - **偏好设置**：dsh ≥ 0.1.7 把插件的 `Config` schema（`updateRepo`，声明为 volatile）直接投影成 Plugins 设置页的在线表单，无需自研卡片；插件的自持数据（技能版本记录 `installed-skills.json`、跳过的更新头 `update-state.json`）放在 `$DSH_HOME/whaletv-workbench/` 自己的 JSON 文档里，不占 settings 文档。
 - **检查更新 / 一键更新**（按安装形态分流）：**git 检出安装**——「检查更新」执行 `git fetch` + ahead/behind 对比并展示新提交列表，「更新」执行 `git pull --ff-only` → `pnpm install` + 重建 bundle → `clientModules.rebuilt` 热注入，附提交级跳过/回滚；**tarball 安装**（桌面端 / `plugin add github:`）——对比本地与更新仓库的版本号，「更新」在 profile 目录执行 `pnpm add github:<repo>` 在线装新版本（v0.8.1 起直连 pnpm，绕开插件管理器的误报），重启生效。版本探测走 raw / jsDelivr / GitHub API 三源回退链。
+- **更新闭环**（v0.8.9）：更新过程**实时显示阶段**（拉取 → 安装依赖 → 重建 bundle → 热注入，tarball 为 `pnpm add`，含已耗时秒数）；面板内**一键重启 dsh**（托盘菜单之外的第二条路）——Host 先返回响应再退出，由写入插件状态目录的分离助手等待进程结束后重新拉起；Electron 桌面端 / systemd 托管等无法忠实复现启动命令的形态会**拒绝自救重启**并给出可复制的启动命令；底部可展开**完整更新历史**（时间 / 成功失败 / before→after / 是否需重启 / 错误）。
 - **工作台图标**：`assets/workbench.svg`（品牌红面板网格）构建时内嵌为 SVG data URL，矢量缩放不因压缩模糊，用于入口图标与面板头部（`scripts/gen-icon.mjs`）。
 
 ## 架构
@@ -36,6 +37,9 @@ WhaleTV 工作台 —— DeepSeek Harness（`dsh`）的站外 Web 插件：把�
 │   POST /whaletv/workbench/update  git pull + pnpm install      │
 │                                   + pnpm run bundle            │
 │                                   + clientModules.rebuilt()    │
+│   GET  /whaletv/workbench/update/progress  更新阶段（轮询）      │
+│   GET  /whaletv/workbench/restart/plan     能否面板内重启        │
+│   POST /whaletv/workbench/restart          重启（仅回环地址）    │
 └────────────────────────────────────────────────────────────────┘
 ┌─ Browser 半（client bundle，dsh.client 扫描进 __DSH_BOOT__）───┐
 │ src/client/index.ts                                           │
@@ -182,7 +186,7 @@ node scripts/install-profile.mjs web
 
 ## 版本
 
-当前版本 **v0.8.8**（对齐 dsh 0.2.0-rc.2）。每次发版的变更详见 [CHANGELOG.md](./CHANGELOG.md)。面板顶部会显示实际运行的版本号（读自 `package.json`），跟这里对齐即可（`pnpm run check:version` 会在冒烟链里校验三处一致）。
+当前版本 **v0.8.9**（对齐 dsh 0.2.0-rc.2）。每次发版的变更详见 [CHANGELOG.md](./CHANGELOG.md)。面板顶部会显示实际运行的版本号（读自 `package.json`），跟这里对齐即可（`pnpm run check:version` 会在冒烟链里校验三处一致）。
 
 ## License
 

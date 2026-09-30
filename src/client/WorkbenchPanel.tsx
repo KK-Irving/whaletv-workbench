@@ -16,8 +16,8 @@ import { Button, Input, Modal, useModalLayer } from '@deepseek-ai/dsh-client-ui-
 import clsx from 'clsx'
 import type { WorkbenchPanelProps } from './contract.ts'
 import type {
-  WorkbenchConfig, WorkbenchGroup, WorkbenchHealthEntry, WorkbenchItem,
-  WorkbenchUpdateCheckResult, WorkbenchUsageRecord,
+  WorkbenchConfig, WorkbenchGroup, WorkbenchHealthEntry, WorkbenchItem, WorkbenchRestartPlan,
+  WorkbenchUpdateCheckResult, WorkbenchUpdateProgress, WorkbenchUsageRecord,
 } from '../shared.ts'
 import { WORKBENCH_ICON } from './icon.ts'
 import css from './WorkbenchPanel.module.css'
@@ -572,6 +572,9 @@ export function WorkbenchPanel({
   update,
   checkUpdate,
   loadUpdateHistory,
+  loadProgress,
+  restartPlan,
+  restart,
   skipUpdate,
   rollbackUpdate,
   loadUsage,
@@ -618,6 +621,12 @@ export function WorkbenchPanel({
   const [dragOverGroupId, setDragOverGroupId] = useState<string | null>(null)
   /** The one open confirmation dialog (replaces window.confirm/alert). */
   const [confirmRequest, setConfirmRequest] = useState<ConfirmRequest | null>(null)
+  /** Live stage of the running update pipeline (③), polled while updating. */
+  const [progress, setProgress] = useState<WorkbenchUpdateProgress | null>(null)
+  /** True from "restart accepted" until the host answers again (③). */
+  const [restarting, setRestarting] = useState(false)
+  /** Whether the footer's full update history is expanded (③). */
+  const [historyOpen, setHistoryOpen] = useState(false)
   /** Dialog element: the modal layer owns Escape, Tab trapping and focus return. */
   const panelRef = useRef<HTMLElement | null>(null)
 
@@ -665,6 +674,26 @@ export function WorkbenchPanel({
     const timer = window.setTimeout(() => { setHealth(null) }, NOTICE_AUTO_DISMISS_MS)
     return () => { window.clearTimeout(timer) }
   }, [health, healthBusy])
+
+  // Update progress (③): while a pipeline runs, poll the Host's stage line so
+  // the panel shows "正在安装依赖…" instead of a frozen button. The interval
+  // clears itself as soon as the update settles; the last polled snapshot is
+  // simply not rendered once `updating` goes false (derived below).
+  useEffect(() => {
+    if (!updating) return
+    let cancelled = false
+    const tick = async (): Promise<void> => {
+      try {
+        const next = await loadProgress()
+        if (!cancelled) setProgress(next)
+      } catch {
+        // The host is busy spawning child processes; a missed poll is fine.
+      }
+    }
+    void tick()
+    const timer = window.setInterval(() => { void tick() }, 1_000)
+    return () => { cancelled = true; window.clearInterval(timer) }
+  }, [updating, loadProgress])
 
   const reload = useCallback(async () => {
     try {
@@ -836,6 +865,70 @@ export function WorkbenchPanel({
       onConfirm: () => { void performRollback() },
     })
   }, [updateHistory, askConfirm, performRollback])
+
+  /**
+   * Apply the restart (the confirmation dialog's onConfirm): ask the Host to
+   * relaunch, then wait for it to serve again and reload onto the new process.
+   */
+  const performRestart = useCallback(async (): Promise<void> => {
+    setRestarting(true)
+    try {
+      await restart()
+    } catch (error) {
+      setRestarting(false)
+      actions.setLoadError(error instanceof Error ? error.message : String(error))
+      return
+    }
+    // The host answers before it exits, so the first polls still hit the old
+    // process. Keep polling until a request succeeds again.
+    const deadline = Date.now() + 90_000
+    while (Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 2_000))
+      try {
+        await loadState()
+        window.location.reload()
+        return
+      } catch {
+        // Still down — the helper is still bringing it back.
+      }
+    }
+    setRestarting(false)
+    actions.setLoadError('重启后 90 秒内未重新连上服务端——请检查 dsh 是否已启动（托盘菜单或终端）。')
+  }, [restart, loadState, actions])
+
+  /**
+   * One-click restart (③). The Host decides whether it may relaunch itself:
+   * embedded (Electron) and service-managed (systemd) hosts answer
+   * `relaunchable: false`, and the dialog then hands over the exact command
+   * instead of pretending the button can work.
+   */
+  const runRestart = useCallback(async (): Promise<void> => {
+    let plan: WorkbenchRestartPlan
+    try {
+      plan = await restartPlan()
+    } catch (error) {
+      actions.setLoadError(error instanceof Error ? error.message : String(error))
+      return
+    }
+    if (!plan.relaunchable) {
+      askConfirm({
+        title: '重启 dsh',
+        description: `${plan.note ?? '当前形态不支持面板内重启。'} 启动命令：${plan.command}`,
+        confirmLabel: '复制命令',
+        cancelLabel: '关闭',
+        onConfirm: () => { void copyPrompt(plan.command) },
+      })
+      return
+    }
+    askConfirm({
+      title: '重启 dsh',
+      description: '将结束当前 harness 进程并重新拉起：页面断开约 10–20 秒，恢复后自动刷新。进行中的会话会被中断（记录已落盘，重启后可继续）。',
+      confirmLabel: '重启',
+      cancelLabel: '取消',
+      danger: true,
+      onConfirm: () => { void performRestart() },
+    })
+  }, [restartPlan, askConfirm, copyPrompt, performRestart, actions])
 
   /** Persist a whole config; on success re-read state from the Host. */
   const persistConfig = useCallback(async (next: WorkbenchConfig): Promise<boolean> => {
@@ -1135,6 +1228,9 @@ export function WorkbenchPanel({
     : null
   const activeItemId = effectiveActive !== null ? flatMatches[effectiveActive]?.id : undefined
   const lastOkUpdate = updateHistory?.find(entry => entry.ok === true && entry.changed === true)
+  /** Progress is shown only while an update is genuinely in flight, so a stale
+   *  snapshot from the previous run never lingers in the footer. */
+  const liveProgress = updating && progress?.running === true ? progress : null
 
   // Keep the keyboard cursor in view while arrowing through matches.
   useEffect(() => {
@@ -1188,6 +1284,15 @@ export function WorkbenchPanel({
           </Button>
           <Button size="sm" variant={editMode ? 'primary' : 'outline'} onClick={toggleEditMode} disabled={updating || saving}>
             {editMode ? '完成' : '编辑'}
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => { void runRestart() }}
+            disabled={updating || saving || restarting}
+            title="结束并重新拉起 dsh；面板会等待服务恢复后自动刷新"
+          >
+            {restarting ? '重启中…' : '重启 dsh'}
           </Button>
           <Button size="sm" onClick={closePanel} aria-label="关闭工作台">✕</Button>
         </header>
@@ -1404,8 +1509,15 @@ export function WorkbenchPanel({
           />
         </div>
 
-        {(lastResult !== null || updateLog !== '') && (
+        {(lastResult !== null || updateLog !== '' || liveProgress !== null || historyOpen) && (
           <footer className={clsx(css.footer, lastResult !== null && css.footerWithResult)}>
+            {liveProgress !== null && (
+              <p className={css.progressLine} role="status">
+                <span className={css.progressDot} aria-hidden="true" />
+                {liveProgress.detail}
+                {liveProgress.elapsedSeconds !== undefined ? `（已 ${liveProgress.elapsedSeconds}s）` : ''}
+              </p>
+            )}
             <div className={css.footerHead}>
               {lastResult !== null && <p className={css.result}>{lastResult}</p>}
               <Button size="sm" className={css.dismiss} onClick={dismissResult} aria-label="关闭提示">✕</Button>
@@ -1422,9 +1534,46 @@ export function WorkbenchPanel({
                 </Button>
               </div>
             )}
+            {/* Update history (③): the rolling attempts log was already on the
+                wire for the rollback affordance; this exposes all of it. */}
+            {updateHistory !== null && updateHistory.length > 0 && (
+              <div className={css.historyBlock}>
+                <button
+                  type="button"
+                  className={css.historyToggle}
+                  aria-expanded={historyOpen}
+                  onClick={() => { setHistoryOpen(open => !open) }}
+                >
+                  {historyOpen ? '▾' : '▸'} 更新历史（{updateHistory.length}）
+                </button>
+                {historyOpen && (
+                  <ul className={css.historyList}>
+                    {updateHistory.map(entry => (
+                      <li key={`${entry.time}-${entry.after ?? ''}`} className={css.historyItem}>
+                        <span className={css.historyTime}>{entry.time.slice(0, 16).replace('T', ' ')}</span>
+                        <span className={clsx(css.historyBadge, entry.ok ? css.historyOk : css.historyBad)}>
+                          {entry.ok ? '成功' : '失败'}
+                        </span>
+                        <span className={css.historyDetail}>
+                          {entry.ok
+                            ? `${entry.changed === true ? '有更新' : '无变化'}${entry.before !== undefined && entry.after !== undefined ? ` ${entry.before.slice(0, 7)} → ${entry.after.slice(0, 7)}` : ''}${entry.needRestart === true ? '（需重启）' : ''}`
+                            : (entry.error ?? '未知错误')}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
           </footer>
         )}
       </section>
+      {restarting && (
+        <div className={css.restartOverlay} role="status" aria-live="polite">
+          <p className={css.restartTitle}>正在重启 dsh…</p>
+          <p className={css.restartHint}>服务恢复后面板会自动刷新；若长时间没有动静，请用托盘菜单重启 Web 服务。</p>
+        </div>
+      )}
       <ConfirmDialog request={confirmRequest} onClose={closeConfirm} />
     </div>
   )

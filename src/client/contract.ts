@@ -10,12 +10,13 @@ import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 // Type-only: pull the layout's SlotMap merge (shell.overlay).
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 import type {
-  WorkbenchConfig, WorkbenchConfigSaveResult, WorkbenchHealth, WorkbenchSessionFollowupResult,
+  WorkbenchConfig, WorkbenchConfigSaveResult, WorkbenchHealth, WorkbenchRestartPlan,
+  WorkbenchRestartResult, WorkbenchSessionFollowupResult,
   WorkbenchSkillImportRequest, WorkbenchSkillImportResult, WorkbenchSkillInstallRequest,
   WorkbenchSkillInstallResult, WorkbenchSkillList, WorkbenchSkillRemoveResult,
   WorkbenchSkillUpdateResult, WorkbenchState,
-  WorkbenchUpdateCheckResult, WorkbenchUpdateHistory, WorkbenchUpdateResult,
-  WorkbenchUpdateRollbackResult, WorkbenchUpdateSkipResult, WorkbenchUsage,
+  WorkbenchUpdateCheckResult, WorkbenchUpdateHistory, WorkbenchUpdateProgress,
+  WorkbenchUpdateResult, WorkbenchUpdateRollbackResult, WorkbenchUpdateSkipResult, WorkbenchUsage,
 } from '../shared.ts'
 import type { createWorkbenchStore } from './store.ts'
 
@@ -42,6 +43,12 @@ export type WorkbenchInjected = {
   checkUpdate: () => Promise<WorkbenchUpdateCheckResult>
   /** Read the rolling update-attempt log persisted by the Host (P1-9). */
   loadUpdateHistory: () => Promise<WorkbenchUpdateHistory>
+  /** Poll the running update pipeline's stage (③). */
+  loadProgress: () => Promise<WorkbenchUpdateProgress>
+  /** Ask the Host how (and whether) it can restart itself (③). */
+  restartPlan: () => Promise<WorkbenchRestartPlan>
+  /** Relaunch the harness; the caller's page will disconnect while it comes back (③). */
+  restart: () => Promise<WorkbenchRestartResult>
   /** Mark the given upstream head as skipped; the checker stops nagging until the remote moves (P1-10). */
   skipUpdate: (sha: string) => Promise<WorkbenchUpdateSkipResult>
   /** Reset to the state before the last successful update and hot-inject (P1-9). */

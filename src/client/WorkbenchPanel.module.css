@@ -640,3 +640,131 @@
   background: var(--dsw-alias-state-warn-tertiary);
   color: var(--dsw-alias-state-warn-label);
 }
+
+/* Update progress line: the running pipeline's stage, polled per second. */
+.progressLine {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-secondary, var(--dsw-alias-label-tertiary));
+}
+
+.progressDot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--dsw-alias-label-primary);
+  animation: wb-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes wb-pulse {
+  0%, 100% { opacity: 0.25; }
+  50% { opacity: 1; }
+}
+
+/* Update history: the rolling attempts log, expanded on demand. */
+.historyBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.historyToggle {
+  align-self: flex-start;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--dsw-alias-label-tertiary);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.historyToggle:hover {
+  color: var(--dsw-alias-label-primary);
+}
+
+.historyList {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.historyItem {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.historyTime {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.historyBadge {
+  flex: none;
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  line-height: 14px;
+}
+
+.historyOk {
+  background: var(--dsw-alias-state-success-tertiary, var(--dsw-alias-markdown-inline-code));
+  color: var(--dsw-alias-state-success-label, var(--dsw-alias-label-tertiary));
+}
+
+.historyBad {
+  background: var(--dsw-alias-state-warn-tertiary);
+  color: var(--dsw-alias-state-warn-label);
+}
+
+.historyDetail {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Restart overlay: covers the panel while the harness goes down. */
+.restartOverlay {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 24px;
+  border-radius: 16px;
+  background: var(--dsw-alias-bg-layer-1);
+  text-align: center;
+}
+
+.restartTitle {
+  margin: 0;
+  font-size: 15px;
+  line-height: 22px;
+  color: var(--dsw-alias-label-primary);
+}
+
+.restartHint {
+  margin: 0;
+  max-width: 420px;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-tertiary);
+}
