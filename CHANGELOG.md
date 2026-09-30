@@ -2,6 +2,21 @@
 
 Notable changes per version. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) loosely; pre-1.0 minor bumps carry feature-level changes because the API surface is still shaping up.
 
+## 0.8.6 — 2026-09-30
+
+### Changed
+
+- **Informational notices close themselves after 10s** — the update-result
+  footer (「工作台已更新并自动重载。」/「已是最新版本，无需更新。」/ rollback
+  outcomes) and the "已是最新" check banner now disappear on their own
+  instead of waiting for the ✕. One timer covers both surfaces, so a new
+  notice restarts the countdown cleanly.
+- **An available update never auto-closes.** When the check finds a newer
+  version (tarball: 有新版本 x → y; git: 远端有 N 个新提交) the banner stays
+  until it is applied or explicitly dismissed — a notice carrying a 更新
+  button must not vanish before it can be clicked. Check failures keep their
+  重试 affordance for the same reason.
+
 ## 0.8.5 — 2026-09-30
 
 Interaction-safety release: the panel now behaves like a real dialog,

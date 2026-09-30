@@ -37,6 +37,20 @@ const REOPEN_AFTER_REBUILD_KEY = 'whaletv-workbench.reopen-after-rebuild'
 /** A rebuild + remount lands within seconds; anything older is stale. */
 const REOPEN_FLAG_TTL_MS = 90_000
 
+/** How long an informational notice stays before it closes itself. */
+const NOTICE_AUTO_DISMISS_MS = 10_000
+
+/**
+ * Whether a completed update check found something the user has not acted on.
+ * Only this state (and check errors) outlives the auto-dismiss window: an
+ * update banner must not disappear before it can be clicked.
+ */
+function updateAvailable(result: WorkbenchUpdateCheckResult | null): boolean {
+  if (result === null || result.ok !== true) return false
+  // Tarball installs compare published versions; git checkouts compare refs.
+  return result.tarball === true ? result.upToDate === false : (result.behind ?? 0) > 0
+}
+
 function markReopenAfterRebuild(): void {
   try {
     sessionStorage.setItem(REOPEN_AFTER_REBUILD_KEY, String(Date.now()))
@@ -615,21 +629,32 @@ export function WorkbenchPanel({
   // confirmation Modal) take the foreground first.
   useModalLayer(panelRef, open, closePanel)
 
-  // Auto-dismiss timer for the "already up to date" notification (no log to
-  // read → 5s countdown). Cleared on manual ✕, next update start, or unmount.
-  const dismissTimerRef = useRef<number | null>(null)
-  const clearDismissTimer = useCallback(() => {
-    if (dismissTimerRef.current !== null) {
-      window.clearTimeout(dismissTimerRef.current)
-      dismissTimerRef.current = null
-    }
-  }, [])
+  /** Manual close of the update result footer (✕). */
   const dismissResult = useCallback(() => {
-    clearDismissTimer()
     actions.setLastResult(null)
     actions.setUpdateLog('')
-  }, [actions, clearDismissTimer])
-  useEffect(() => () => { clearDismissTimer() }, [clearDismissTimer])
+  }, [actions])
+
+  // Informational notices close themselves after NOTICE_AUTO_DISMISS_MS. The
+  // one exception is an update the user has not acted on yet: that banner
+  // stays until it is explicitly closed (or the update is applied).
+  useEffect(() => {
+    if (lastResult === null) return
+    if (updateAvailable(checkResult)) return
+    const timer = window.setTimeout(() => {
+      actions.setLastResult(null)
+      actions.setUpdateLog('')
+    }, NOTICE_AUTO_DISMISS_MS)
+    return () => { window.clearTimeout(timer) }
+  }, [lastResult, checkResult, actions])
+
+  useEffect(() => {
+    if (checkResult === null) return
+    // Errors keep the retry affordance; an available update waits for a click.
+    if (checkResult.ok !== true || updateAvailable(checkResult)) return
+    const timer = window.setTimeout(() => { actions.setCheckResult(null) }, NOTICE_AUTO_DISMISS_MS)
+    return () => { window.clearTimeout(timer) }
+  }, [checkResult, actions])
 
   const reload = useCallback(async () => {
     try {
@@ -680,7 +705,6 @@ export function WorkbenchPanel({
   }, [actions, loadUpdateHistory])
 
   const runUpdate = useCallback(async () => {
-    clearDismissTimer()
     actions.setUpdating(true)
     actions.setUpdateLog('')
     actions.setLastResult(null)
@@ -705,13 +729,9 @@ export function WorkbenchPanel({
         void reload()
         void reloadHistory()
       } else {
-        // No new commits — no log to read; auto-dismiss after 5s.
+        // No new commits — no log to read; the notice auto-dismisses.
         actions.setUpdateLog('')
         actions.setLastResult('已是最新版本，无需更新。')
-        dismissTimerRef.current = window.setTimeout(() => {
-          dismissTimerRef.current = null
-          actions.setLastResult(null)
-        }, 5000)
       }
     } catch (error) {
       actions.setUpdateLog(error instanceof Error ? error.message : String(error))
@@ -719,7 +739,7 @@ export function WorkbenchPanel({
     } finally {
       actions.setUpdating(false)
     }
-  }, [actions, update, reload, reloadHistory, clearDismissTimer])
+  }, [actions, update, reload, reloadHistory])
 
   /**
    * "检查更新" flow (roadmap P1-8): fetch + ahead/behind + commit list on
@@ -754,7 +774,6 @@ export function WorkbenchPanel({
 
   /** Apply the rollback (the confirmation dialog's onConfirm). */
   const performRollback = useCallback(async () => {
-    clearDismissTimer()
     actions.setUpdating(true)
     actions.setUpdateLog('')
     actions.setLastResult(null)
@@ -778,7 +797,7 @@ export function WorkbenchPanel({
     } finally {
       actions.setUpdating(false)
     }
-  }, [actions, rollbackUpdate, reload, reloadHistory, clearDismissTimer])
+  }, [actions, rollbackUpdate, reload, reloadHistory])
 
   /** Reset to the state before the last successful update (P1-9). */
   const runRollback = useCallback(() => {
