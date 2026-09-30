@@ -665,15 +665,15 @@ async function fetchLatestTarballVersion(repo: string): Promise<{ version?: stri
         headers: { 'User-Agent': 'whaletv-workbench-update-check', Accept: 'application/vnd.github+json' },
       })
       if (!response.ok) {
-        attempts.push(`${source.name}: HTTP ${response.status}`)
+        attempts.push(`${source.url} -> HTTP ${response.status}`)
         continue
       }
       const version = source.parse(await response.text())
       if (version !== undefined) return { version, attempts }
-      attempts.push(`${source.name}: 响应不含版本号`)
+      attempts.push(`${source.url} -> 响应不含版本号`)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      attempts.push(`${source.name}: ${message === 'This operation was aborted' ? '超时(8s)' : message}`)
+      attempts.push(`${source.url} -> ${message === 'This operation was aborted' ? '超时(8s)' : message}`)
     } finally {
       clearTimeout(timer)
     }
@@ -758,9 +758,12 @@ async function runUpdateCheck(skippedHead: string, updateRepo: string): Promise<
     const installedVersion = readVersion()
     const probe = await fetchLatestTarballVersion(updateRepo)
     if (probe.version === undefined) {
+      // Self-identifying diagnostics: which build answered, from which
+      // directory, probing exactly which URLs. A stale host module (loaded
+      // before a fix landed on disk) betrays itself here immediately.
       return {
         ok: false, upToDate: false, tarball: true, installedVersion,
-        error: `无法获取最新版本信息（所有版本探测源失败：${probe.attempts.join('；')}）。请检查网络或代理设置后重试。`,
+        error: `无法获取最新版本信息。构建=${readVersion()}；目录=${PACKAGE_DIR}；探测：${probe.attempts.join(' ｜ ')}`,
       }
     }
     return {
