@@ -23,6 +23,43 @@ import { WORKBENCH_ICON } from './icon.ts'
 import css from './WorkbenchPanel.module.css'
 import { SkillsSection } from './SkillsSection.tsx'
 
+/**
+ * sessionStorage key set right before a self-update / rollback rebuild.
+ *
+ * `ctx.clientModules.rebuilt()` disposes this client half and mounts the
+ * fresh bundle, which rebuilds the module-scope store with `open: false` —
+ * so a successful in-panel update looked like the panel "crashing" and
+ * vanishing. The fresh mount consumes a still-fresh flag, reopens the panel
+ * and resurfaces the outcome.
+ */
+const REOPEN_AFTER_REBUILD_KEY = 'whaletv-workbench.reopen-after-rebuild'
+
+/** A rebuild + remount lands within seconds; anything older is stale. */
+const REOPEN_FLAG_TTL_MS = 90_000
+
+function markReopenAfterRebuild(): void {
+  try {
+    sessionStorage.setItem(REOPEN_AFTER_REBUILD_KEY, String(Date.now()))
+  } catch {
+    // Storage unavailable (hardened browser context): the update still works,
+    // the panel just stays closed.
+  }
+}
+
+/** Consume the flag: true only when it exists AND is still fresh. */
+function takeReopenAfterRebuild(): boolean {
+  let raw: string | null = null
+  try {
+    raw = sessionStorage.getItem(REOPEN_AFTER_REBUILD_KEY)
+    if (raw !== null) sessionStorage.removeItem(REOPEN_AFTER_REBUILD_KEY)
+  } catch {
+    return false
+  }
+  if (raw === null) return false
+  const at = Number.parseInt(raw, 10)
+  return Number.isFinite(at) && Date.now() - at <= REOPEN_FLAG_TTL_MS
+}
+
 /** The one action label each entry kind drives. */
 function actionLabel(item: WorkbenchItem): string {
   if (item.url !== undefined && item.url !== '') return '打开网页'
@@ -520,6 +557,9 @@ export function WorkbenchPanel({
     actions.setUpdating(true)
     actions.setUpdateLog('')
     actions.setLastResult(null)
+    // A successful pull rebuilds + hot-injects: this component instance is
+    // about to be unmounted, so mark the panel for reopen by the fresh mount.
+    markReopenAfterRebuild()
     try {
       const result = await update()
       if (result.changed === true) {
@@ -529,10 +569,10 @@ export function WorkbenchPanel({
         // restart; client-only pulls hot-inject and refresh on their own.
         actions.setLastResult(
           result.tarball === true
-            ? '新版本已通过 dsh 插件管理器安装；重启 dsh 后生效。'
+            ? '新版本已安装（pnpm add）；重启 dsh 后生效。'
             : result.needRestart === true
               ? '更新完成。本次包含服务端改动，请重启 dsh web 后生效。'
-              : '更新完成并已热注入，界面将自动刷新。',
+              : '更新完成并已热注入，工作台会自动重载。',
         )
         actions.setCheckResult(null)
         void reload()
@@ -594,6 +634,8 @@ export function WorkbenchPanel({
     actions.setUpdating(true)
     actions.setUpdateLog('')
     actions.setLastResult(null)
+    // Rollback also rebuilds + hot-injects; same remount as runUpdate.
+    markReopenAfterRebuild()
     try {
       const result = await rollbackUpdate()
       if (result.ok) {
@@ -716,6 +758,19 @@ export function WorkbenchPanel({
     const next: WorkbenchConfig = { groups: [...state.config.groups, group] }
     if (await persistConfig(next)) startRenameGroup(group)
   }
+
+  // Hot-inject survival (v0.8.4): when this instance is the fresh bundle
+  // mounted right after an in-panel update/rollback rebuilt the plugin, the
+  // store starts closed (open=false) — exactly what made a successful update
+  // look like a crash. Consume the flag the old instance left behind, reopen,
+  // and refill the history/log surfaces the remount wiped.
+  useEffect(() => {
+    if (!takeReopenAfterRebuild()) return
+    actions.setOpen(true)
+    actions.setLastResult('工作台已更新并自动重载。')
+    void reload()
+    void reloadHistory()
+  }, [actions, reload, reloadHistory])
 
   // Load state + skills catalog when the panel opens; Esc and backdrop
   // click close it. Skills refresh in parallel with state — they come from

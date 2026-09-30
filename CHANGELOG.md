@@ -2,6 +2,22 @@
 
 Notable changes per version. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) loosely; pre-1.0 minor bumps carry feature-level changes because the API surface is still shaping up.
 
+## 0.8.4 — 2026-09-30
+
+### Fixed
+
+- **In-panel update no longer looks like a crash.** A successful 更新 rebuilds
+  and hot-injects the client bundle, which disposes the plugin's client half
+  and mounts the fresh one — with a fresh module-scope store, so the open
+  panel vanished the instant the update landed (the update itself had
+  succeeded, which is why reopening showed the new version). The
+  update/rollback flow now leaves a short-lived sessionStorage marker; the
+  fresh mount consumes it, reopens the panel by itself and refills the
+  state/history surfaces, so the flow reads as "updated and reloaded"
+  instead of "crashed".
+- Removed the last stale "通过 dsh 插件管理器安装" copy from the tarball
+  update banner (that channel has been a direct `pnpm add` since 0.8.1).
+
 ## 0.8.3 — 2026-09-30
 
 Hygiene release: two real cache/perf fixes plus a full dead-code sweep
