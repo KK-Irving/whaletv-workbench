@@ -381,14 +381,21 @@ export interface WorkbenchSessionFollowupResult {
 export interface WorkbenchRestartPlan {
   ok: boolean
   /**
-   * True only for a plain Node CLI host the plugin can relaunch faithfully.
-   * Embedded (Electron) and service-managed (systemd) hosts report false and
-   * carry the reason in `note`.
+   * True when the panel may restart the host itself. False only for hosts
+   * where it cannot be done safely (service-managed) or honestly (entry not
+   * identifiable) — those carry the reason in `note`.
    */
   relaunchable: boolean
+  /**
+   * Which mechanism a relaunch will use:
+   * `electron` = the desktop app's own `app.relaunch()`/`app.exit()`;
+   * `helper` = a detached helper respawns the captured command;
+   * `manual` = no self-restart (the UI offers the command instead).
+   */
+  strategy?: 'electron' | 'helper' | 'manual'
   /** Exact command line that started this harness — shown and copyable either way. */
   command: string
-  /** Why self-restart is unavailable, when it is. */
+  /** What the restart will look like, or why it is unavailable. */
   note?: string
 }
 

@@ -2,6 +2,23 @@
 
 Notable changes per version. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) loosely; pre-1.0 minor bumps carry feature-level changes because the API surface is still shaping up.
 
+## 0.8.12 — 2026-09-30
+
+### Fixed
+
+- **桌面端（Electron）不再只是「给你一条命令自己重启」。** 之前只要检测到
+  `process.versions.electron` 就一律判定「无法自救重启」，重启按钮因此退化成
+  复制命令——对桌面端用户等于没有这个功能。现在按宿主实际情况分三种策略：
+  - **`electron`**：当前进程就是桌面端主进程（harness 入口被交给 Electron
+    二进制作为主脚本运行）时，直接调用 Electron 官方重启 API
+    `app.relaunch()` + `app.exit()`——干净退出、以同样参数重开，无需 PID 操作；
+  - **`helper`**：普通 Node CLI 宿主，仍走「分离助手等父进程退出后再拉起」
+    的路径（含托管方抢跑窗口）；
+  - **`manual`**：只有两种确实做不到的情况才让用户手动——systemd 托管
+    （退出会连带 unit 的 cgroup 杀掉替代进程）与启动入口无法识别。
+  `GET /restart/plan` 现在返回 `strategy` 字段，确认弹窗也按策略说明会发生
+  什么（例如「应用窗口会关闭并自动重新打开」）。
+
 ## 0.8.11 — 2026-09-30
 
 ### Fixed

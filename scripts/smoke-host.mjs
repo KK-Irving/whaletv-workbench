@@ -230,6 +230,11 @@ try {
   if (plan.status !== 200 || typeof plan.body.relaunchable !== 'boolean' || typeof plan.body.command !== 'string' || plan.body.command === '') {
     throw new Error(`/restart/plan shape: ${plan.status} ${JSON.stringify(plan.body)}`)
   }
+  // The suite runs under plain Node, so the desktop strategy must never be
+  // claimed here — the Electron-only path may not leak into other hosts.
+  if (!['helper', 'manual'].includes(plan.body.strategy)) {
+    throw new Error(`/restart/plan strategy under Node: ${JSON.stringify(plan.body.strategy)}`)
+  }
 
   // 12. The restart route refuses a request that is not a direct loopback
   //     caller. The mock has no socket at all, so this asserts the guard —
