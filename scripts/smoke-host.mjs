@@ -64,8 +64,9 @@ try {
   // The inject list is a runtime contract Cordis validates lazily: any
   // property access on `ctx` that isn't declared here throws
   // "cannot get property X without inject" at the first read from a route
-  // handler. `settings` is touched once in apply() (configure({auto:false})).
-  const expectedInject = ['webServer', 'clientModules', 'skills', 'agents', 'settings'].sort()
+  // handler. `settings` is touched once in apply() (configure({auto:false}));
+  // `pluginManager` powers the tarball update channel (v0.7.4).
+  const expectedInject = ['webServer', 'clientModules', 'skills', 'agents', 'settings', 'pluginManager'].sort()
   const actualInject = [...(mod.inject ?? [])].sort()
   if (actualInject.join(',') !== expectedInject.join(',')) {
     throw new Error(`inject drift: got [${actualInject.join(', ')}], want [${expectedInject.join(', ')}]`)
