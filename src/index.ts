@@ -613,22 +613,65 @@ function pluginManagerLike(ctx: Context): TarballPluginManager | undefined {
   }
 }
 
-/** Fetch the update repo's master package.json version (tarball update channel). */
+/**
+ * Fetch the update repo's master package.json version (tarball update
+ * channel). Three sources are tried in order — mainland-China networks
+ * routinely block raw.githubusercontent.com while reaching api.github.com
+ * or the jsDelivr CDN, so the chain degrades instead of failing the check.
+ */
 async function fetchLatestTarballVersion(repo: string): Promise<string | undefined> {
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), 8_000)
+  const sources: Array<{ url: string; parse: (body: string) => string | undefined }> = [
+    {
+      // Raw CDN first: live commit HEAD, no cache lag.
+      url: `https://raw.githubusercontent.com/${repo}/master/package.json`,
+      parse: body => parseVersionField(body),
+    },
+    {
+      // jsDelivr CDN: plain JSON, CN-friendly edge cache (may lag master by up to 12h).
+      url: `https://cdn.jsdelivr.net/gh/${repo}@master/package.json`,
+      parse: body => parseVersionField(body),
+    },
+    {
+      // GitHub API: contents endpoint returns the file base64-encoded.
+      url: `https://api.github.com/repos/${repo}/contents/package.json?ref=master`,
+      parse: body => {
+        try {
+          const envelope = JSON.parse(body) as { content?: string; encoding?: string }
+          if (envelope.encoding !== 'base64' || typeof envelope.content !== 'string') return undefined
+          return parseVersionField(Buffer.from(envelope.content, 'base64').toString('utf8'))
+        } catch {
+          return undefined
+        }
+      },
+    },
+  ]
+  for (const source of sources) {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 8_000)
+    try {
+      const response = await fetch(source.url, {
+        signal: controller.signal,
+        headers: { 'User-Agent': 'whaletv-workbench-update-check', Accept: 'application/vnd.github+json' },
+      })
+      if (!response.ok) continue
+      const version = source.parse(await response.text())
+      if (version !== undefined) return version
+    } catch {
+      /* try the next source */
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+  return undefined
+}
+
+/** Pull the semver `version` field out of a package.json document. */
+function parseVersionField(packageJson: string): string | undefined {
   try {
-    const response = await fetch(`https://raw.githubusercontent.com/${repo}/master/package.json`, {
-      signal: controller.signal,
-    })
-    if (!response.ok) return undefined
-    const manifest = (await response.json()) as { version?: unknown }
-    const version = manifest?.version
+    const version = (JSON.parse(packageJson) as { version?: unknown }).version
     return typeof version === 'string' && /^\d+\.\d+\.\d+/.test(version) ? version : undefined
   } catch {
     return undefined
-  } finally {
-    clearTimeout(timer)
   }
 }
 

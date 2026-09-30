@@ -2,6 +2,18 @@
 
 Notable changes per version. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) loosely; pre-1.0 minor bumps carry feature-level changes because the API surface is still shaping up.
 
+## 0.7.6 — 2026-09-30
+
+CN-network-proof version probe for the tarball update channel.
+
+### Fixed
+
+- **检查更新 no longer fails on unreachable raw.githubusercontent.com.** The
+  tarball version probe now tries three sources in order — raw (live HEAD),
+  the jsDelivr CDN (CN-friendly edge cache, may lag master by up to 12h),
+  and the GitHub contents API (base64) — first successful answer wins. All
+  requests carry an explicit User-Agent.
+
 ## 0.7.5 — 2026-09-30
 
 Validation release against **dsh 0.2.0-rc.2** (435 files changed upstream from
