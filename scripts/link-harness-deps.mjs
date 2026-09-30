@@ -16,7 +16,7 @@
  * the checkout source tree, found by walking `packages/**` (bounded depth,
  * skipping node_modules/.git/lib/dist) for a manifest whose `name` matches.
  */
-import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, rmSync, symlinkSync } from 'node:fs'
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import os from 'node:os'

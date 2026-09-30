@@ -714,6 +714,20 @@ export function WorkbenchPanel({
     }
   }, [actions, loadUpdateHistory])
 
+  /**
+   * Refresh the 最近使用 ledger (roadmap P2-12). Declared before the effects
+   * that call it: an arrow-function const read from an earlier effect only
+   * ever sees its first-render closure (react-hooks flags this as
+   * "accessed before it is declared").
+   */
+  const reloadUsage = useCallback(async (): Promise<void> => {
+    try {
+      setUsage((await loadUsage()).usage)
+    } catch {
+      // Rail-only data — a failed read just leaves the rail stale.
+    }
+  }, [loadUsage])
+
   const runUpdate = useCallback(async () => {
     actions.setUpdating(true)
     actions.setUpdateLog('')
@@ -837,7 +851,7 @@ export function WorkbenchPanel({
     } finally {
       setSaving(false)
     }
-  }, [actions, saveConfig, reload])
+  }, [saveConfig, reload])
 
   const toggleEditMode = useCallback(() => {
     setEditMode(mode => {
@@ -969,8 +983,11 @@ export function WorkbenchPanel({
     void reload()
     void reloadSkills()
     void reloadHistory()
+    // The setState inside lands after an awaited fetch, not during the effect
+    // body — the synchronous-cascade the rule guards against cannot happen.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void reloadUsage()
-  }, [open, reload, reloadSkills, reloadHistory])
+  }, [open, reload, reloadSkills, reloadHistory, reloadUsage])
 
   // Alt+W toggles the panel from anywhere on the page (roadmap P2-13).
   useEffect(() => {
@@ -1030,15 +1047,6 @@ export function WorkbenchPanel({
         cancelLabel: null,
         onConfirm: () => { /* informational only */ },
       })
-    }
-  }
-
-  /** Refresh the 最近使用 ledger (roadmap P2-12). */
-  const reloadUsage = async (): Promise<void> => {
-    try {
-      setUsage((await loadUsage()).usage)
-    } catch {
-      // Rail-only data — a failed read just leaves the rail stale.
     }
   }
 

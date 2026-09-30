@@ -1,14 +1,18 @@
-# Fast CI: install → version check → bundle → mock-based smoke.
+# Fast CI: install → version check → bundle → lib drift gate → lint → smoke.
 #
 # Deliberately NO harness code here: @deepseek-ai/* peers are resolved on
 # dev machines via scripts/link-harness-deps.mjs ($DSH_HOME fallback or a
 # sibling harness checkout), which a throwaway CI runner does not have.
-# Two consequences, both by design:
+# Three consequences, all by design:
 #   - tsc --noEmit against real dsh types runs in the weekly "dsh alignment"
 #     workflow (.github/workflows/align.yml) instead.
 #   - smoke-host self-skips without the host runtime deps (yaml +
 #     @deepseek-ai/dsh-llm + @deepseek-ai/schemastery are bare imports of the
 #     built lib/index.js); the SKIP marker keeps the gate explicit.
+#   - the lib/ drift gate runs AFTER the bundle step, so it compares the
+#     committed bundle against one this machine just built (the build is
+#     path-reproducible: CSS-module ids/hashes are root-relative and the
+#     comparison normalizes dependency paths).
 name: CI
 
 on:
@@ -40,5 +44,5 @@ jobs:
       - name: Build (icon + dual-face bundle)
         run: pnpm run bundle
 
-      - name: Smoke (client / apply; host self-skips without harness deps)
+      - name: Smoke (lib drift + lint + client / apply; host self-skips without harness deps)
         run: pnpm run smoke:ci

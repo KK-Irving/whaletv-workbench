@@ -36,7 +36,6 @@ const slots = {
     return () => {}
   },
 }
-const workspaces = undefined
 const uiWorkspace = { startSession: () => {} }
 const remote = { session: { openWorkspacePath: async () => ({ ok: true, value: { opened: true } }) } }
 const ctx = { slots, uiWorkspace, remote }
@@ -55,7 +54,8 @@ const mockRequire = (specifier) => {
 }
 
 try {
-  // eslint-disable-next-line no-eval -- smoke test executes the artifact under test
+  // Indirect eval on purpose: the smoke test executes the artifact under test
+  // (no-eval only reports direct eval calls, so no directive is needed).
   (0, eval)(body)
 } catch (error) {
   console.error('smoke-apply: bundle execution failed:', error)

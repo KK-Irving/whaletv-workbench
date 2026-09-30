@@ -36,7 +36,8 @@ const code = readFileSync(BUNDLE).toString('utf8')
 // The bundle only registers; strip the sourceMappingURL before eval.
 const body = code.replace(/\/\/# sourceMappingURL=.*$/m, '')
 try {
-  // eslint-disable-next-line no-eval -- smoke test executes the artifact under test
+  // Indirect eval on purpose: the smoke test executes the artifact under test
+  // (no-eval only reports direct eval calls, so no directive is needed).
   (0, eval)(body)
 } catch (error) {
   console.error('smoke-client: bundle execution failed:', error)

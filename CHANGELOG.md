@@ -2,6 +2,37 @@
 
 Notable changes per version. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) loosely; pre-1.0 minor bumps carry feature-level changes because the API surface is still shaping up.
 
+## 0.8.8 — 2026-09-30
+
+Engineering-gate release: reproducible builds, a `lib/` drift gate, and lint.
+
+### Fixed
+
+- **The client bundle was not reproducible.** lightningcss mixes the CSS-module
+  filename into every class hash, and the CSS virtual module id carried the
+  absolute path — so the same sources built in two directories produced
+  different `lib/client.js` bytes. Worse, even two builds *in the same
+  directory* differed: lightningcss hands its export map back in randomized
+  hash order. Class hashes and virtual ids are now project-root-relative and
+  the emitted export keys are sorted, so a rebuild with no source change is a
+  byte-for-byte no-op (verified across directories).
+
+### Added
+
+- **`pnpm run check:lib` — committed `lib/` must equal a fresh build.** `lib/`
+  ships in the repository so installs need no build step, but nothing stopped a
+  source edit from being pushed without rebuilding (every user then installs
+  stale code). The gate normalizes dependency paths (rolldown's `//#region`
+  comments and sourcemap sources leak the checkout location), runs in CI right
+  after the build step, and is part of the local `pnpm run smoke` chain.
+- **`pnpm run lint` — minimal eslint gate** (`@eslint/js` +
+  `typescript-eslint` + `react-hooks` + `globals`, flat config). It caught real
+  problems on the first run: an unused `readlinkSync` import and a dead
+  `workspaces` binding in the scripts, two stale `no-eval` directives (ESLint
+  does not report *indirect* eval), an unnecessary `actions` dependency, and
+  the client panel's `reloadUsage` being read before its declaration — the
+  exact use-before-define the code review had flagged by hand.
+
 ## 0.8.7 — 2026-09-30
 
 ### Changed

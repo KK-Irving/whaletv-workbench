@@ -1,6 +1,6 @@
 {
   "name": "whaletv-workbench",
-  "version": "0.8.7",
+  "version": "0.8.8",
   "private": true,
   "description": "WhaleTV 工作台插件：网页/文档/应用/技能一键跳转 + 点击即用的自更新，热插入 DeepSeek Harness (dsh) Web 界面",
   "license": "MIT",
@@ -42,19 +42,26 @@
     "bundle": "node scripts/gen-icon.mjs && tsdown",
     "build": "pnpm run bundle",
     "check:version": "node scripts/check-version.mjs",
+    "check:lib": "node scripts/check-lib-drift.mjs",
     "check:types": "tsc --noEmit",
-    "smoke": "pnpm run check:version && pnpm run check:types && node scripts/smoke-client.mjs && node scripts/smoke-apply.mjs && node scripts/smoke-host.mjs",
-    "smoke:ci": "pnpm run check:version && node scripts/smoke-client.mjs && node scripts/smoke-apply.mjs && node scripts/smoke-host.mjs",
+    "lint": "eslint .",
+    "smoke": "pnpm run check:version && pnpm run check:lib && pnpm run check:types && pnpm run lint && node scripts/smoke-client.mjs && node scripts/smoke-apply.mjs && node scripts/smoke-host.mjs",
+    "smoke:ci": "pnpm run check:version && pnpm run check:lib && pnpm run lint && node scripts/smoke-client.mjs && node scripts/smoke-apply.mjs && node scripts/smoke-host.mjs",
     "link:harness": "node scripts/link-harness-deps.mjs",
     "install:profile": "node scripts/install-profile.mjs"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/node": "^24.0.0",
     "@types/react": "~18.3.1",
     "clsx": "^2.0.0",
+    "eslint": "^10.11.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "globals": "^17.12.0",
     "lightningcss": "^1.32.0",
     "tsdown": "^0.22.2",
     "typescript": "^5.7.0",
+    "typescript-eslint": "^8.71.0",
     "yaml": "^2.0.0"
   },
   "peerDependencies": {
