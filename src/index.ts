@@ -546,6 +546,14 @@ async function runUpdatePipeline(ctx: Context, updateRepo: string): Promise<Work
   if (remote === undefined || remote.trim() === '') {
     return { ok: false, error: '未配置 git 远程仓库（origin）。请先执行 git remote add origin <仓库地址> 再重试。' }
   }
+  // lib/ is committed (0.7.2+) but regenerable: a local `pnpm run bundle`
+  // leaves it dirty and a dirty tree blocks the ff-only pull. Discard
+  // lib-only drift before pulling — source files are never touched here, so
+  // a pull that fails for real source conflicts still fails loudly.
+  const libDrift = await git(['status', '--porcelain', '--', 'lib'])
+  if (libDrift !== undefined && libDrift.trim() !== '') {
+    await git(['checkout', '--', 'lib'])
+  }
   try {
     const pullOutput = await run('git', ['pull', '--ff-only'])
     const after = await git(['rev-parse', 'HEAD'])
