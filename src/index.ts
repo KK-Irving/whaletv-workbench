@@ -273,8 +273,17 @@ async function buildState(): Promise<WorkbenchState> {
       ...(remote !== undefined ? { remote } : {}),
     },
     config: readConfig(),
+    capabilities: HOST_CAPABILITIES,
   }
 }
+
+/**
+ * What THIS build of the Host half can serve. Kept in the loaded module (not
+ * derived from disk or package.json) so a newer client can detect that the
+ * running process predates a feature and tell the user to restart, instead of
+ * calling a route that answers "未知的工作台路由".
+ */
+const HOST_CAPABILITIES: string[] = ['restart', 'progress', 'history']
 
 /**
  * Volatile Config fields (dsh ≥ 0.1.7 live-editable settings) resolve to

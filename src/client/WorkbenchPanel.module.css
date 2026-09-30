@@ -738,6 +738,18 @@
   white-space: nowrap;
 }
 
+/* Host/client version skew: the running server predates the panel. */
+.skewBadge {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--dsw-alias-state-warn-tertiary);
+  color: var(--dsw-alias-state-warn-label);
+  font-size: 11px;
+  line-height: 16px;
+  cursor: help;
+}
+
 /* Restart overlay: covers the panel while the harness goes down. */
 .restartOverlay {
   position: absolute;

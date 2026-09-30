@@ -186,7 +186,7 @@ node scripts/install-profile.mjs web
 
 ## 版本
 
-当前版本 **v0.8.10**（对齐 dsh 0.2.0-rc.2）。每次发版的变更详见 [CHANGELOG.md](./CHANGELOG.md)。面板顶部会显示实际运行的版本号（读自 `package.json`），跟这里对齐即可（`pnpm run check:version` 会在冒烟链里校验三处一致）。
+当前版本 **v0.8.11**（对齐 dsh 0.2.0-rc.2）。每次发版的变更详见 [CHANGELOG.md](./CHANGELOG.md)。面板顶部会显示实际运行的版本号（读自 `package.json`），跟这里对齐即可（`pnpm run check:version` 会在冒烟链里校验三处一致）。
 
 ## License
 

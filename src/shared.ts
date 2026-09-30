@@ -64,6 +64,17 @@ export interface WorkbenchState {
   installKind: 'git' | 'tarball'
   git: WorkbenchGitState
   config: WorkbenchConfig
+  /**
+   * Feature flags of the Host code that is ACTUALLY RUNNING.
+   *
+   * `version` cannot answer this: it is read from package.json on disk at
+   * request time, so after an update it reports the new version even while the
+   * process still serves the old module (the client bundle hot-injects, the
+   * Host half does not). This list travels with the loaded code, so a client
+   * newer than its Host can tell — and say "restart dsh" — instead of calling
+   * a route that does not exist yet. Absent on hosts older than 0.8.11.
+   */
+  capabilities?: string[]
   error?: string
 }
 

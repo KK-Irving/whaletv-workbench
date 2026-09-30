@@ -2,6 +2,22 @@
 
 Notable changes per version. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) loosely; pre-1.0 minor bumps carry feature-level changes because the API surface is still shaping up.
 
+## 0.8.11 — 2026-09-30
+
+### Fixed
+
+- **「重启 dsh」在更新后立刻点会报「未知的工作台路由：/restart/plan」。**
+  这是 host/client 版本偏斜，不是路由错误：客户端 bundle 在更新后会热注入，
+  而 **Host 半只在 dsh 进程启动时加载**——所以刚更新完的那段时间，面板比它
+  对话的服务端新，路由还不存在。现在：
+  - `GET /state` 额外返回 `capabilities`（**随已加载的代码走**，不是从磁盘
+    package.json 读的版本号——那个在更新后就已经是新版本了），面板据此判断
+    服务端是否支持重启；
+  - 服务端不支持时，面板显示「服务端待重启」徽标，点击给出可操作说明：
+    **先用托盘菜单「重启 Web 服务」重启一次 dsh**，之后面板内重启即可用；
+  - 老版本 Host（没有 `capabilities` 字段）仍会返回原文错误，面板把这条
+    错误翻译成同一段说明，不再直接把原始报错抛给用户。
+
 ## 0.8.10 — 2026-09-30
 
 ### Fixed

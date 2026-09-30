@@ -147,6 +147,12 @@ try {
   if (state0.status !== 200 || state0.body.ok !== true) {
     throw new Error(`initial state failed: ${state0.status} ${JSON.stringify(state0.body)}`)
   }
+  // The client half detects a stale Host by these flags (the client bundle
+  // hot-injects, the Host half only loads at process start), so the contract
+  // must not silently lose them.
+  if (!Array.isArray(state0.body.capabilities) || !state0.body.capabilities.includes('restart')) {
+    throw new Error(`state.capabilities must advertise the restart route: ${JSON.stringify(state0.body.capabilities)}`)
+  }
 
   // 2. Valid config save → 200, url trimmed.
   const save = await request('POST', '/config', JSON.stringify({

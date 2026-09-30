@@ -41,6 +41,16 @@ const REOPEN_FLAG_TTL_MS = 90_000
 const NOTICE_AUTO_DISMISS_MS = 10_000
 
 /**
+ * Shown when the running Host half predates what the panel is offering.
+ *
+ * The client bundle hot-injects after an update; the Host half only loads when
+ * the dsh process starts. So right after updating, the panel can be newer than
+ * the server it talks to — the restart route simply is not there yet, and the
+ * old code answered "未知的工作台路由" instead.
+ */
+const HOST_SKEW_HINT = '工作台的服务端是 dsh 启动时加载的旧版本（客户端已更新，服务端还没有）。请先用托盘菜单「重启 Web 服务」重启一次 dsh；之后这里就能面板内重启了。'
+
+/**
  * Whether a completed update check found something the user has not acted on.
  * Only this state (and check errors) outlives the auto-dismiss window: an
  * update banner must not disappear before it can be clicked.
@@ -599,6 +609,14 @@ export function WorkbenchPanel({
   const checking = useStore(s => s.checking)
   const checkResult = useStore(s => s.checkResult)
   const updateHistory = useStore(s => s.updateHistory)
+  /**
+   * Whether the RUNNING Host half knows the restart route. `undefined` on
+   * hosts older than 0.8.11 (no capabilities field), where the only way to
+   * find out is to try — and to translate the miss into the same advice.
+   */
+  const hostSupportsRestart = state?.capabilities === undefined
+    ? undefined
+    : state.capabilities.includes('restart')
 
   const [editMode, setEditMode] = useState(false)
   const [editing, setEditing] = useState<ItemEditing | null>(null)
@@ -903,11 +921,31 @@ export function WorkbenchPanel({
    * instead of pretending the button can work.
    */
   const runRestart = useCallback(async (): Promise<void> => {
+    const explainSkew = (): void => {
+      askConfirm({
+        title: '需要先重启一次 dsh',
+        description: HOST_SKEW_HINT,
+        confirmLabel: '知道了',
+        cancelLabel: null,
+        onConfirm: () => { /* informational only */ },
+      })
+    }
+    // A host that reports capabilities without `restart` predates the route.
+    if (hostSupportsRestart === false) {
+      explainSkew()
+      return
+    }
     let plan: WorkbenchRestartPlan
     try {
       plan = await restartPlan()
     } catch (error) {
-      actions.setLoadError(error instanceof Error ? error.message : String(error))
+      const message = error instanceof Error ? error.message : String(error)
+      // Older hosts (no capabilities field) answer the miss with this text.
+      if (message.includes('未知的工作台路由')) {
+        explainSkew()
+        return
+      }
+      actions.setLoadError(message)
       return
     }
     if (!plan.relaunchable) {
@@ -928,7 +966,7 @@ export function WorkbenchPanel({
       danger: true,
       onConfirm: () => { void performRestart() },
     })
-  }, [restartPlan, askConfirm, copyPrompt, performRestart, actions])
+  }, [restartPlan, askConfirm, copyPrompt, performRestart, actions, hostSupportsRestart])
 
   /** Persist a whole config; on success re-read state from the Host. */
   const persistConfig = useCallback(async (next: WorkbenchConfig): Promise<boolean> => {
@@ -1285,12 +1323,15 @@ export function WorkbenchPanel({
           <Button size="sm" variant={editMode ? 'primary' : 'outline'} onClick={toggleEditMode} disabled={updating || saving}>
             {editMode ? '完成' : '编辑'}
           </Button>
+          {hostSupportsRestart === false && (
+            <span className={css.skewBadge} title={HOST_SKEW_HINT}>服务端待重启</span>
+          )}
           <Button
             size="sm"
             variant="outline"
             onClick={() => { void runRestart() }}
             disabled={updating || saving || restarting}
-            title="结束并重新拉起 dsh；面板会等待服务恢复后自动刷新"
+            title={hostSupportsRestart === false ? HOST_SKEW_HINT : '结束并重新拉起 dsh；面板会等待服务恢复后自动刷新'}
           >
             {restarting ? '重启中…' : '重启 dsh'}
           </Button>
