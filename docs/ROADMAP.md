@@ -3,25 +3,27 @@
 > 生成于 2026-09-03，基于 v0.6.0 代码现状审查 + 对 [dckxx/x-hub](https://github.com/dckxx/x-hub)（v0.6.5）的完整调研。
 > 每完成一项请在对应条目前打 ✅ 并同步更新 [CHANGELOG.md](../CHANGELOG.md) 与 [DESIGN.md](./DESIGN.md) §6 路线表。
 
-## 执行状态（2026-09-03，v0.7.1 发版）
+## 执行状态（2026-09-30 晚，v0.7.7 @ dsh 0.2.0-rc.2）
 
-**已完成**（全部 `tsc --noEmit` + smoke 绿，bundle 通过）：
+**v0.7.1 → v0.7.7 冲刺成果**（src 3105 → 4992 行，CI + weekly alignment 双绿）：
 
-- ✅ **P0 全部**：dsh 0.1.6-alpha.2 对齐（`mainView` retention 读当前会话、`settings.plugins.tab`）、CI（ci.yml）、每周对齐 job（align.yml）、tsc 纳入 smoke、check-version 三处一致门、死代码清理、needRestart 按 host 文件 diff 精确化
-- ✅ **P1 全部**：检查/更新分离（`/update/check` + 提交列表 banner）、更新历史 + 回滚（updates.json + `/update/rollback`，脏工作区拒绝）、跳过此版本（`/update/skip`）、needRestart 驱动的结果文案
-- ✅ **P2 核心**：最近使用通栏（/usage + Top10 chips）、Alt+W 唤起、搜索 ↑↓/Enter 键盘导航 + 高亮、条目拖拽排序（组内 + 跨组）、可达性检查（/health + ✓✗ 徽标）、favicon 代理（/icon，私网拒绝）
-- ✅ **P3 核心**：技能版本化（installed-skills.json：来源 URL/subPath/ref/SHA，`/skills` 返回 origin + 卡片展示）、单技能「检查更新」（`/skills/update`，SHA 对比 + 覆盖安装）
-- ✅ **P4 部分**：ADR 0001（配置与状态在 $DSH_HOME）、ADR 0002（provider rank 450）、link-harness-deps 支持无 $DSH_HOME 环境（CI 前置）、smoke-host 覆盖安全边界（git-import 白名单/保留字/ref 注入/穿越、skip SHA、favicon 私网）
-- ✅ **评审调整（2026-09-03 第二轮）**：
-  - 检查/更新合并为**单入口两阶段**：头部只留「检查更新」（有更新时变主色），拉取动作收敛到结果 banner 内的「更新」按钮——原两个按钮语义重叠
-  - 技能面板内编辑（P3-23 原型）**按评审移除**：误触改坏 SKILL.md 的风险大于收益，普通用户以「删除 + 重装」替代；`GET /skills/source` 路由一并移除，不留死接口
-- ✅ **dsh 0.1.7-alpha.1 对齐（v0.7.1）**：
-  - CI 修复：smoke-host 对 harness-only 运行时依赖（yaml/dsh-llm/schemastery）预检，缺失时显式 SKIP——每周对齐 job 才是 host 半的权威门
-  - settings 缝断裂（installSection→SettingsForms、settingsScope→configForms）以**去依赖**化解：自持状态迁入自有 JSON（update-state.json），偏好字段标 volatile 交给 0.1.7 自动配置页，自研设置卡片退场（SettingsCard 删除、client inject 去掉 settingsScope、peerDeps 去掉 dsh-settings/ui-settings/ui-settings-plugins）
-  - link-harness-deps 逐项容错（单个被锁 junction 不再炸整轮）+ 可修复 0.1.7 profile 自身的悬挂 junction（要求 checkout 已 build lib 面）
-  - 本会话沙箱拒绝 junction 增删 → 补链需在自有终端跑 `pnpm run link:harness`；tsconfig 暂以 paths 指向 checkout 类型兜底（补链成功后删除）
+- ✅ **P0/P1 全量**：dsh 0.1.6→0.1.7 对齐、CI + weekly alignment（对 harness master）、check-version 三处一致门、tsc 纳入冒烟链、**检查/更新双通道**（git 检出 = ref 对比 + 提交列表 + 跳过/回滚；tarball = 版本对比 + `pluginManager.installBundle` 官方管线）、三源版本探测回退链（raw/jsDelivr/api）、更新历史 + 回滚
+- ✅ **P2 核心**：最近使用通栏、Alt+W、搜索键盘导航、拖拽排序、可达性检查、favicon 代理、安装类型感知 UX
+- ✅ **P3 核心**：技能版本化 + 单技能检查更新
+- ✅ **打包革命**：`lib/` 随仓库分发 + 零构建脚本 → allowBuilds 门永久绕开，任何 profile 开箱即装
+- ✅ **工程底座**：逐源诊断、smoke 覆盖安全边界、ADR ×2、link-harness 逐项容错 + 跨大版本补链
+- ✅ **实战验证**：跨过 **dsh 0.2.0-rc.2** 大版本（435 文件变更）零源码修改通过——去依赖架构经受住考验；volatile 访问器 `[object Object]` bug 由自识别诊断定位并修复
 
-**剩余（后续版本）**：
+**下一步方向（按价值排序，2026-09-30 晚复盘）**：
+
+1. **[高] Host/Panel 拆分（P4-25/26 提级）**：`src/index.ts` 已 2105 行、`WorkbenchPanel.tsx` 1514 行——13 条路由 + 4 大功能域挤在单文件，对齐与 review 成本持续放大。建议 Host 拆 `routes/skills/update/usage-health-icon`，Panel 拆 `UpdateBanner/RecentBar/SkillsSection`
+2. **[高] 更新进度实时反馈**：dsh 0.2.0 plugin-manager 会 emit `plugin-manager/install-state` 事件（installing/applying 阶段 + registry 重试），Host 订阅后推给面板——当前点「更新」后是黑盒等待
+3. **[中] 面板内完整更新历史列表**（updates.json 数据已在，只差 UI）
+4. **[中] compat.ts 收口（P4-27）**：pluginManager/settings/mainView 等结构化访问散在各处，收口后对齐只需改一处
+5. **[中] 纯函数单测**：`isSemverGt` / `suggestGitName` / `resolveSkillSource` 均为纯逻辑，`node --test` 即可覆盖（含预发布版本边界）
+6. **[低] locale 字典（P2-18）、技能市场源（P3-22）、MCP 快捷卡片（P3-24）、favicon retention、/health 补私网防护（与 /icon 对齐）**
+
+**剩余（原清单）**：
 
 - ⏳ P2-18 中英文 locale 字典（需 PropsLocale 注入改造三个组件，纯机械大改）
 - ⏳ P2-19 面板明暗对比度系统审计（新增 CSS 已用 token + fallback，全量审计待做）
