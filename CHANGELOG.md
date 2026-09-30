@@ -2,6 +2,23 @@
 
 Notable changes per version. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) loosely; pre-1.0 minor bumps carry feature-level changes because the API surface is still shaping up.
 
+## 0.7.5 — 2026-09-30
+
+Validation release against **dsh 0.2.0-rc.2** (435 files changed upstream from
+0.1.7-alpha.1). **Zero source changes required**: the de-dependency strategy
+from 0.7.1/0.7.2 (Host-owned JSON state, structural plugin-manager access,
+no settings seam, lib committed) absorbed the entire major transition —
+tsc against the rebuilt 0.2.0 faces passes with no errors and the full smoke
+suite is green.
+
+### Changed
+
+- Re-linked peer junctions to the 0.2.0 checkout/profile generation
+  (19 stale entries pruned); `lib/client.js` rebuilt against the 0.2.0
+  externals table.
+- Alignment target and verified version matrix now: dsh 0.2.0-rc.2
+  (master), with the weekly dsh-alignment workflow tracking master.
+
 ## 0.7.4 — 2026-09-30
 
 Real updates for tarball installs: the panel now drives the dsh plugin
