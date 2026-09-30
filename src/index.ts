@@ -92,6 +92,8 @@ export interface Config {
   gitRemote: string
   /** Extra roots the workbench-installed skill directory sits alongside; consumed by future skill provider work. */
   customSkillDirs: string[]
+  /** GitHub `owner/repo` the tarball-install update channel resolves against (raw package.json + installBundle spec). */
+  updateRepo: string
   /** @deprecated 0.7.1 — bookkeeping moved to installed-skills.json; kept so stored user layers still validate. */
   installedSkills: string[]
   /** @deprecated 0.7.1 — bookkeeping moved to update-state.json; kept so stored user layers still validate. */
@@ -101,6 +103,7 @@ export interface Config {
 export const Config = z.object({
   gitRemote: z.string().default('').volatile(),
   customSkillDirs: z.array(z.string()).default([]).volatile(),
+  updateRepo: z.string().default('KK-Irving/whaletv-workbench').volatile(),
   /* Bookkeeping below stays NON-volatile on purpose: nothing may edit it
    * through the settings surface — the write routes own these fields. */
   installedSkills: z.array(z.string()).default([]),
@@ -115,7 +118,7 @@ export const Config = z.object({
  * profile entry id (`whaletv-workbench`, see cordis.patch.yml) — referenced
  * by the generated page, not by this code.
  */
-export const inject = ['webServer', 'clientModules', 'skills', 'agents', 'settings']
+export const inject = ['webServer', 'clientModules', 'skills', 'agents', 'settings', 'pluginManager']
 
 /** Plugin id — matches the package name and the client bundle graph row. */
 const CLIENT_ID = 'whaletv-workbench'
@@ -485,6 +488,7 @@ async function buildState(): Promise<WorkbenchState> {
     ok: true,
     version: readVersion(),
     packageDir: PACKAGE_DIR,
+    installKind: head !== undefined ? 'git' : 'tarball',
     git: {
       configured: head !== undefined,
       ...(branch !== undefined ? { branch } : {}),
@@ -512,9 +516,9 @@ function sendJson(res: ServerResponse, status: number, body: unknown): void {
  * actionable { ok: false, error } result. History writes are best-effort —
  * a broken updates.json must never turn a good update into a panel error.
  */
-async function runUpdate(ctx: Context): Promise<WorkbenchUpdateResult> {
+async function runUpdate(ctx: Context, updateRepo: string): Promise<WorkbenchUpdateResult> {
   const startedAt = new Date()
-  const result = await runUpdatePipeline(ctx)
+  const result = await runUpdatePipeline(ctx, updateRepo)
   appendUpdateHistory({
     time: startedAt.toISOString(),
     ok: result.ok,
@@ -528,13 +532,15 @@ async function runUpdate(ctx: Context): Promise<WorkbenchUpdateResult> {
   return result
 }
 
-/** The git → install → bundle → hot-inject pipeline proper (no history side effects). */
-async function runUpdatePipeline(ctx: Context): Promise<WorkbenchUpdateResult> {
+/**
+ * The update pipeline proper (no history side effects): git checkouts run
+ * pull → install → bundle → hot-inject; tarball installs (no .git) hand the
+ * update to the dsh plugin-manager (roadmap v0.7.4).
+ */
+async function runUpdatePipeline(ctx: Context, updateRepo: string): Promise<WorkbenchUpdateResult> {
   const before = await git(['rev-parse', 'HEAD'])
   if (before === undefined) {
-    // Tarball install: the panel hides the update entry for this case; the
-    // message stays for direct API calls.
-    return { ok: false, error: '插件目录不是 git 仓库（应用内安装副本）。更新方式：在 dsh 桌面端的插件管理界面重装本插件；git 检出安装则检查远程仓库配置后重试。' }
+    return runTarballUpdate(ctx, updateRepo)
   }
   const remote = await git(['remote', 'get-url', 'origin'])
   if (remote === undefined || remote.trim() === '') {
@@ -584,20 +590,123 @@ async function runUpdatePipeline(ctx: Context): Promise<WorkbenchUpdateResult> {
 }
 
 /**
+ * The dsh plugin-manager service (dsh-base composes it on every 0.1.7 host),
+ * read structurally — this file deliberately carries no dsh-plugin-manager
+ * type dependency (its surface is still stabilizing).
+ */
+interface TarballPluginManager {
+  installBundle?: (spec: string, options?: { approvedBuilds?: string[] }) => Promise<{
+    changed: boolean
+    application: 'applied' | 'restart-required' | 'overridden' | 'failed' | 'cancelled'
+    warnings?: string[]
+    packageResult?: { output?: string }
+    error?: { diagnostic?: string }
+  }>
+}
+
+/** Read `ctx.pluginManager` through the structural face; undefined when absent. */
+function pluginManagerLike(ctx: Context): TarballPluginManager | undefined {
+  try {
+    return (ctx as { pluginManager?: TarballPluginManager }).pluginManager
+  } catch {
+    return undefined
+  }
+}
+
+/** Fetch the update repo's master package.json version (tarball update channel). */
+async function fetchLatestTarballVersion(repo: string): Promise<string | undefined> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 8_000)
+  try {
+    const response = await fetch(`https://raw.githubusercontent.com/${repo}/master/package.json`, {
+      signal: controller.signal,
+    })
+    if (!response.ok) return undefined
+    const manifest = (await response.json()) as { version?: unknown }
+    const version = manifest?.version
+    return typeof version === 'string' && /^\d+\.\d+\.\d+/.test(version) ? version : undefined
+  } catch {
+    return undefined
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+/** Whether `latest` is strictly newer than `installed` (x.y.z[, -prerelease] aware). */
+function isSemverGt(latest: string, installed: string): boolean {
+  const parse = (value: string): [number, number, number, string] => {
+    const [core, pre = ''] = value.split('-')
+    const [major = 0, minor = 0, patch = 0] = core.split('.').map(part => Number.parseInt(part, 10) || 0)
+    return [major, minor, patch, pre]
+  }
+  const [lm, ln, lp, lpre] = parse(latest)
+  const [im, inn, ip, ipre] = parse(installed)
+  if (lm !== im) return lm > im
+  if (ln !== inn) return ln > inn
+  if (lp !== ip) return lp > ip
+  // A release outranks its own prerelease prefixes; different prefixes compare lexically.
+  if (lpre !== ipre) return lpre !== '' && (ipre === '' || lpre > ipre)
+  return false
+}
+
+/**
+ * Tarball update (roadmap v0.7.4): hand the update to the host's own plugin
+ * manager — `installBundle('github:<repo>')` re-resolves the default branch's
+ * latest commit, installs through the same pnpm pipeline as `dsh plugin`,
+ * re-selects the bundle, and reports `restart-required` for an existing
+ * dependency. `approvedBuilds` keeps older scripted releases installable.
+ */
+async function runTarballUpdate(ctx: Context, repo: string): Promise<WorkbenchUpdateResult> {
+  const manager = pluginManagerLike(ctx)
+  if (manager?.installBundle === undefined) {
+    return {
+      ok: false, tarball: true,
+      error: '当前 dsh 未提供插件管理器服务，无法在线更新。请在桌面端的插件管理界面重装本插件以更新。',
+    }
+  }
+  const spec = `github:${repo}`
+  try {
+    const change = await manager.installBundle(spec, { approvedBuilds: ['whaletv-workbench'] })
+    if (change.application === 'failed' || change.error !== undefined) {
+      const detail = truncate(change.error?.diagnostic ?? change.packageResult?.output ?? `application: ${change.application}`)
+      return { ok: false, tarball: true, error: `插件管理器安装失败：${detail}` }
+    }
+    const application = change.application === 'restart-required'
+      ? '重启 dsh 后新版本生效'
+      : `application: ${change.application}`
+    return {
+      ok: true, tarball: true, needRestart: true, changed: change.changed,
+      output: truncate(`已通过 dsh 插件管理器安装 ${spec}。\napplication: ${change.application}\n${application}。`),
+    }
+  } catch (error) {
+    return { ok: false, tarball: true, error: truncate(String(error instanceof Error ? error.message : error)) }
+  }
+}
+
+/**
  * Update checker (roadmap P1-8): fetch the origin remote and compare HEAD
  * against its upstream — ahead/behind counts plus the newest incoming commit
  * subjects — without touching the working tree. `skippedHead` is the user's
  * skip marker; when the remote head equals it the result is flagged so the
  * panel can show "skipped" instead of nagging. Never throws.
  */
-async function runUpdateCheck(skippedHead: string): Promise<WorkbenchUpdateCheckResult> {
+async function runUpdateCheck(skippedHead: string, updateRepo: string): Promise<WorkbenchUpdateCheckResult> {
   const branch = await git(['rev-parse', '--abbrev-ref', 'HEAD'])
   if (branch === undefined) {
     // Tarball install (dsh desktop app / `plugin add github:`): no .git, so
-    // git-based checking can never work here. Point at the real update path.
+    // git-based checking can never work here. Compare versions instead — the
+    // installed package.json against the update repo's master package.json.
+    const installedVersion = readVersion()
+    const latestVersion = await fetchLatestTarballVersion(updateRepo)
+    if (latestVersion === undefined) {
+      return {
+        ok: false, upToDate: false, tarball: true, installedVersion,
+        error: '无法获取最新版本信息（访问 GitHub 失败）。请检查网络后重试。',
+      }
+    }
     return {
-      ok: false, upToDate: false,
-      error: '当前是应用内安装的副本（无 .git）。更新方式：在 dsh 桌面端的插件管理界面重装本插件，即可获取最新版本；检查更新/一键更新仅对 git 检出安装有效。',
+      ok: true, upToDate: !isSemverGt(latestVersion, installedVersion), tarball: true,
+      installedVersion, latestVersion,
     }
   }
   let upstream = branch === 'HEAD'
@@ -1660,7 +1769,7 @@ export function apply(ctx: Context, config: Config): void {
             return
           }
           updating = true
-          void runUpdate(ctx).then(
+          void runUpdate(ctx, config.updateRepo).then(
             result => {
               // A successful move invalidates any "skip this version" marker.
               if (result.ok && result.changed === true) clearSkippedHead()
@@ -1674,7 +1783,7 @@ export function apply(ctx: Context, config: Config): void {
         // GET /update/check — fetch + ahead/behind + incoming commit list,
         // no working-tree changes (roadmap P1-8).
         if (sub === '/update/check' && (method === undefined || method === 'GET' || method === 'HEAD')) {
-          void runUpdateCheck(readSkippedHead()).then(
+          void runUpdateCheck(readSkippedHead(), config.updateRepo).then(
             result => { sendJson(res, result.ok ? 200 : 500, result) },
             (error: unknown) => { sendJson(res, 500, { ok: false, upToDate: false, error: String(error) }) },
           )

@@ -336,6 +336,31 @@ function UpdateCheckBanner(props: {
   onDismiss: () => void
 }) {
   const { result, disabled, onUpdate, onSkip, onDismiss } = props
+  if (result.tarball === true) {
+    return (
+      <div className={css.checkBanner}>
+        <div className={css.checkHead}>
+          <span>
+            {result.upToDate === true
+              ? `已是最新（${result.installedVersion}）。`
+              : `有新版本：${result.installedVersion} → ${result.latestVersion}。`}
+          </span>
+          <span className={css.spacer} />
+          <Button size="sm" className={css.dismiss} onClick={onDismiss} aria-label="关闭检查结果">✕</Button>
+        </div>
+        {result.upToDate !== true && (
+          <p className={css.checkMeta}>
+            点「更新」通过 dsh 插件管理器安装新版本；完成后<b>重启 dsh</b> 生效。
+          </p>
+        )}
+        <div className={css.checkActions}>
+          {result.upToDate !== true && (
+            <Button size="sm" variant="primary" onClick={onUpdate} disabled={disabled}>更新</Button>
+          )}
+        </div>
+      </div>
+    )
+  }
   return (
     <div className={css.checkBanner}>
       <div className={css.checkHead}>
@@ -502,9 +527,11 @@ export function WorkbenchPanel({
         // src/index.ts / tsdown.config.ts / package.json change asks for a
         // restart; client-only pulls hot-inject and refresh on their own.
         actions.setLastResult(
-          result.needRestart === true
-            ? '更新完成。本次包含服务端改动，请重启 dsh web 后生效。'
-            : '更新完成并已热注入，界面将自动刷新。',
+          result.tarball === true
+            ? '新版本已通过 dsh 插件管理器安装；重启 dsh 后生效。'
+            : result.needRestart === true
+              ? '更新完成。本次包含服务端改动，请重启 dsh web 后生效。'
+              : '更新完成并已热注入，界面将自动刷新。',
         )
         actions.setCheckResult(null)
         void reload()
@@ -882,27 +909,18 @@ export function WorkbenchPanel({
           )}
           <Button size="sm" onClick={() => { void reload(); void reloadSkills() }} disabled={updating || saving}>刷新</Button>
           {/* Single update entry (review 2026-09-03): 检查更新 fetches and shows
-              the commit banner; the banner's 更新 button is the only path that
-              pulls. Tarball installs (desktop app / github add) have no .git —
-              the entry degrades to an "应用内安装" badge pointing at the app's
-              own plugin manager for updates. */}
-          {state?.git.configured === true ? (
-            <Button
-              size="sm"
-              variant={checkResult?.ok === true && (checkResult.behind ?? 0) > 0 ? 'primary' : undefined}
-              onClick={() => { void runCheck() }}
-              disabled={updating || checking || saving}
-            >
-              {updating ? '更新中…' : checking ? '检查中…' : '检查更新'}
-            </Button>
-          ) : state !== null && (
-            <span
-              className={css.checkMeta}
-              title="应用内安装的副本（无 .git）：更新请在 dsh 桌面端的插件管理界面重装本插件"
-            >
-              应用内安装
-            </span>
-          )}
+              the result banner; the banner's 更新 button is the only path that
+              applies. Both install kinds are supported: git checkouts compare
+              refs; tarball installs compare versions and hand the update to
+              the dsh plugin-manager. */}
+          <Button
+            size="sm"
+            variant={checkResult?.ok === true && ((checkResult.behind ?? 0) > 0 || checkResult.upToDate === false) ? 'primary' : undefined}
+            onClick={() => { void runCheck() }}
+            disabled={updating || checking || saving}
+          >
+            {updating ? '更新中…' : checking ? '检查中…' : '检查更新'}
+          </Button>
           <Button size="sm" variant={editMode ? 'primary' : 'outline'} onClick={toggleEditMode} disabled={updating || saving}>
             {editMode ? '完成' : '编辑'}
           </Button>
@@ -926,7 +944,7 @@ export function WorkbenchPanel({
             检查更新失败：{checkResult.error}
             <Button size="sm" onClick={() => { void runCheck() }} disabled={checking}>重试</Button>
           </div>
-        ) : checkResult.upToDate === true ? (
+        ) : checkResult.upToDate === true && checkResult.tarball !== true ? (
           <div className={css.checkBanner}>
             <div className={css.checkHead}>
               <span>

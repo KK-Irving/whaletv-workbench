@@ -2,6 +2,32 @@
 
 Notable changes per version. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) loosely; pre-1.0 minor bumps carry feature-level changes because the API surface is still shaping up.
 
+## 0.7.4 — 2026-09-30
+
+Real updates for tarball installs: the panel now drives the dsh plugin
+manager, so 检查更新/更新 work in the desktop app instead of degrading.
+
+### Added
+
+- **Tarball update channel (v0.7.4)**: for installs without `.git`,
+  检查更新 compares the installed version against the update repo's master
+  `package.json` (raw.githubusercontent, 8s timeout), and 更新 calls
+  `ctx.pluginManager.installBundle('github:<repo>')` — the same official
+  pipeline the desktop app uses (GitHub connectivity precheck, registry
+  fallbacks, failure rollback, bundle re-selection). `updateRepo` is a
+  volatile Config field (default `KK-Irving/whaletv-workbench`), editable
+  in the generated settings page.
+- `/state` now reports `installKind: 'git' | 'tarball'`.
+
+### Changed
+
+- The check-result banner branches by install kind: tarball shows
+  「已安装 x → 最新 y」with a single 更新 button (skip/commit-list are
+  git-only); completion reads "重启 dsh 后生效" (the manager marks an
+  existing dependency restart-required).
+- 0.7.3's "应用内安装" badge is gone — both install kinds have a working
+  update path now.
+
 ## 0.7.3 — 2026-09-30
 
 Install-kind-aware update UX: tarball installs (the dsh desktop app and

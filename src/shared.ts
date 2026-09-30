@@ -56,6 +56,12 @@ export interface WorkbenchState {
   ok: boolean
   version: string
   packageDir: string
+  /**
+   * How this copy was installed: `git` (a checkout — full 检查更新/更新/回滚
+   * flow) or `tarball` (desktop app / `plugin add github:` — updates go
+   * through the dsh plugin-manager instead).
+   */
+  installKind: 'git' | 'tarball'
   git: WorkbenchGitState
   config: WorkbenchConfig
   error?: string
@@ -76,6 +82,12 @@ export interface WorkbenchUpdateResult {
    * and leave this false.
    */
   needRestart?: boolean
+  /**
+   * Tarball-install mode: the update went through the dsh plugin-manager
+   * (`installBundle`) instead of git, and `needRestart` is always true (the
+   * manager marks an existing dependency restart-required).
+   */
+  tarball?: true
   error?: string
 }
 
@@ -106,6 +118,16 @@ export interface WorkbenchUpdateCheckResult {
   commits?: WorkbenchUpdateCheckCommit[]
   /** True when remoteHead equals the user's skipped-head marker. */
   skipped?: boolean
+  /**
+   * Tarball-install mode (no .git): the check compares the installed
+   * package.json version against the update repo's master package.json
+   * instead of git refs, and 更新 goes through the dsh plugin-manager.
+   */
+  tarball?: true
+  /** Installed package version (tarball mode). */
+  installedVersion?: string
+  /** Latest published version on the update repo's default branch (tarball mode). */
+  latestVersion?: string
   error?: string
 }
 
