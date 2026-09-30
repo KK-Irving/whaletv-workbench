@@ -2,6 +2,25 @@
 
 Notable changes per version. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) loosely; pre-1.0 minor bumps carry feature-level changes because the API surface is still shaping up.
 
+## 0.8.13 — 2026-09-30
+
+### Fixed
+
+- **「重启 dsh」在桌面端会把应用搞坏——已改为诚实的指引。** 0.8.12 试图让桌面端
+  走 Electron 重启，更早的版本则给出「可复制的启动命令」；后者直接造成了故障：
+  - 桌面端的 harness 是 **shell（Electron 主进程）的 IPC 子进程**
+    （`spawn(node, [hostEntry…], { stdio: […, 'ipc'] })`），双方协议里只有
+    `shutdown` / `quit-inspection` / `update-tasks`，**没有 restart**；子进程自行
+    退出会被 shell 判定为崩溃（日志里的 `dsh desktop host stopped`）；
+  - 弹窗给出的命令（`Harness.exe <hostEntry>`）缺少 shell 注入的
+    `ELECTRON_RUN_AS_NODE=1`，手工运行等于**启动第二个应用实例**：抢占
+    `127.0.0.1:19387` → `EADDRINUSE` 崩溃日志 + 单实例锁 →「已打开了进程」，
+    只能杀进程恢复。
+  现在：桌面端返回 `relaunchable: false` 且**不再返回任何可复制命令**；面板也不再
+  渲染重启按钮，改为显示入口徽标（托盘菜单 →「Restart App and Host」/「重启 App
+  和 Host」），说明按宿主形态给出。只有真正的 Node CLI 宿主保留「分离助手等待父
+  进程退出再拉起」的重启路径。
+
 ## 0.8.12 — 2026-09-30
 
 ### Fixed

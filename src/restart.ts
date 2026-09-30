@@ -20,7 +20,6 @@
 import { spawn } from 'node:child_process'
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { createRequire } from 'node:module'
 import { WORKBENCH_STATE_DIR } from './host-plumbing.ts'
 import type { WorkbenchRestartPlan } from './shared.ts'
 
@@ -35,33 +34,6 @@ function quote(token: string): string {
   return /[\s"]/.test(token) ? `"${token.replace(/"/g, '\\"')}"` : token
 }
 
-/**
- * Electron's own app object, when this Host half runs inside the desktop
- * app's main process (the harness entry is handed to the Electron binary as
- * its main script — `process.versions.electron` is then set).
- *
- * `app.relaunch()` + `app.exit()` is THE supported desktop restart: unlike
- * killing and respawning the process, it lets Electron shut down cleanly and
- * start the same app again with the same arguments. A child process spawned
- * with ELECTRON_RUN_AS_NODE has no `app`, which is exactly why this is probed
- * instead of assumed.
- */
-interface ElectronApp {
-  relaunch?: () => void
-  exit?: (code?: number) => void
-}
-
-function electronApp(): ElectronApp | undefined {
-  if (process.versions.electron === undefined) return undefined
-  try {
-    const require = createRequire(import.meta.url)
-    const electron = require('electron') as { app?: ElectronApp }
-    return electron.app
-  } catch {
-    return undefined
-  }
-}
-
 /** Whether this host is service-managed (where killing ourselves kills the unit too). */
 function serviceManaged(): boolean {
   return process.env.INVOCATION_ID !== undefined && process.env.INVOCATION_ID !== ''
@@ -69,32 +41,49 @@ function serviceManaged(): boolean {
 
 /**
  * Derive the restart plan for this process.
- * @returns the plan the UI shows, including which strategy will run.
+ *
+ * The desktop case is why this function is written defensively. The harness
+ * runs as an IPC child of the Electron shell (`spawn(node, [hostEntry…],
+ * {stdio: […, 'ipc']})`), and that protocol carries only `shutdown`,
+ * `quit-inspection` and `update-tasks` — there is NO restart message, and the
+ * shell treats any unsolicited child exit as a crash ("dsh desktop host
+ * stopped"). Worse, the child's own command line (`Harness.exe <hostEntry>`)
+ * only makes sense WITH the `ELECTRON_RUN_AS_NODE=1` the shell injects:
+ * running it by hand starts a second app instance that fails to bind the port
+ * (EADDRINUSE) and trips the single-instance lock — that is what turned the
+ * old "copy this command" advice into a crash loop.
+ *
+ * So the desktop reports `manual` and hands over no command at all, while a
+ * plain Node CLI host keeps the detached-helper relaunch.
+ *
+ * @returns the plan the UI shows, including which strategy would run.
  */
 export function buildRestartPlan(): WorkbenchRestartPlan {
   const entry = process.argv[1]
   const command = [process.execPath, ...process.argv.slice(1)].map(quote).join(' ')
-  // 1. Desktop app: ask Electron to relaunch itself.
-  const app = electronApp()
-  if (app?.relaunch !== undefined && app.exit !== undefined) {
+  // 1. Electron desktop host: the shell owns the process tree and exposes no
+  //    restart to its child; a hand-run command would break the running app.
+  if (process.versions.electron !== undefined) {
     return {
-      ok: true, relaunchable: true, strategy: 'electron', command,
-      note: '将通过桌面端自身的重启机制重启：应用窗口会关闭并自动重新打开（约 10–20 秒）。',
+      ok: true, relaunchable: false, strategy: 'manual', command: '',
+      externalAction: '托盘/菜单 →「Restart App and Host」',
+      note: '桌面端不支持面板内重启：harness 作为桌面应用的子进程运行，应用没有向插件开放重启接口（直接结束子进程会被判定为崩溃）。请用应用自带的重启入口：托盘菜单 →「Restart App and Host」（重启 App 和 Host）。',
     }
   }
   // 2. Service-managed host: a replacement would fight the supervisor's cgroup.
   if (serviceManaged()) {
     return {
-      ok: true, relaunchable: false, strategy: 'manual', command,
-      note: '当前 harness 由 systemd 托管——从这里退出会连同 unit 的 cgroup 一起被杀，请用服务管理器重启。',
+      ok: true, relaunchable: false, strategy: 'manual', command: '',
+      externalAction: '服务管理器（systemctl restart …）',
+      note: '当前 harness 由 systemd 托管：从这里退出会连同 unit 的 cgroup 一起被杀，替代进程也起不来，请用服务管理器重启。',
     }
   }
   // 3. Plain Node CLI host: relaunch the exact command through the helper.
   const entryLooksRunnable = typeof entry === 'string' && /\.(mjs|cjs|js)$/i.test(entry) && existsSync(entry)
   if (!entryLooksRunnable) {
     return {
-      ok: true, relaunchable: false, strategy: 'manual', command,
-      note: '无法确定 harness 的启动入口（argv[1] 不是可执行脚本），请手动重启，或直接使用上面的命令。',
+      ok: true, relaunchable: false, strategy: 'manual', command: '',
+      note: '无法确定 harness 的启动入口（argv[1] 不是可执行脚本），无法安全地自动重启，请手动重启 dsh。',
     }
   }
   return {
@@ -180,24 +169,14 @@ function probeUrl(): string {
 }
 
 /**
- * Schedule the restart: respond first, then hand off to the mechanism this
- * host supports. Uses a native timer on purpose — `ctx.effect`-scoped timers
- * are bound to the plugin fiber, and this callback runs outside any fiber.
+ * Schedule the restart: respond first, then hand off to the detached helper.
+ * Uses a native timer on purpose — `ctx.effect`-scoped timers are bound to the
+ * plugin fiber, and this callback runs outside any fiber.
  *
- * @returns ok, or an error when the chosen mechanism could not be armed.
+ * @returns ok, or an error when the helper could not be armed.
  */
 export function requestRestart(plan: WorkbenchRestartPlan): { ok: boolean; error?: string } {
   if (!plan.relaunchable) return { ok: false, error: plan.note ?? '当前形态不支持面板内重启' }
-  if (plan.strategy === 'electron') {
-    const app = electronApp()
-    if (app?.relaunch === undefined || app.exit === undefined) {
-      return { ok: false, error: '桌面端重启 API 不可用（app.relaunch/app.exit 缺失）' }
-    }
-    // relaunch() queues the new instance for when this one exits.
-    app.relaunch()
-    setTimeout(() => { app.exit?.(0) }, RESTART_EXIT_DELAY_MS)
-    return { ok: true }
-  }
   const started = spawnRestartHelper()
   if (!started.ok) return started
   // Native setTimeout: the HTTP response is already on the wire by then.

@@ -381,22 +381,29 @@ export interface WorkbenchSessionFollowupResult {
 export interface WorkbenchRestartPlan {
   ok: boolean
   /**
-   * True when the panel may restart the host itself. False only for hosts
-   * where it cannot be done safely (service-managed) or honestly (entry not
-   * identifiable) — those carry the reason in `note`.
+   * True when the panel may restart the host itself. False for hosts where it
+   * cannot be done safely (desktop app / service-managed) or honestly (entry
+   * not identifiable) — those carry the reason in `note` and, when one exists,
+   * the user-facing entry point in `externalAction`.
    */
   relaunchable: boolean
   /**
-   * Which mechanism a relaunch will use:
-   * `electron` = the desktop app's own `app.relaunch()`/`app.exit()`;
-   * `helper` = a detached helper respawns the captured command;
-   * `manual` = no self-restart (the UI offers the command instead).
+   * Which mechanism a relaunch uses: `helper` = a detached helper respawns the
+   * captured command; `manual` = no self-restart (the UI only explains).
    */
-  strategy?: 'electron' | 'helper' | 'manual'
-  /** Exact command line that started this harness — shown and copyable either way. */
+  strategy?: 'helper' | 'manual'
+  /**
+   * The command that started this harness — present ONLY when running it by
+   * hand is safe (the Node CLI case). The desktop child's command line is
+   * deliberately empty: it lacks the shell-injected `ELECTRON_RUN_AS_NODE=1`,
+   * so running it starts a second app instance and trips the single-instance
+   * lock + port conflict.
+   */
   command: string
   /** What the restart will look like, or why it is unavailable. */
   note?: string
+  /** Where the user restarts instead, when the panel cannot (e.g. the tray menu). */
+  externalAction?: string
 }
 
 /** POST /whaletv/workbench/restart response. */

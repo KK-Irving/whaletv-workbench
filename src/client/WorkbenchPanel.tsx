@@ -643,6 +643,12 @@ export function WorkbenchPanel({
   const [progress, setProgress] = useState<WorkbenchUpdateProgress | null>(null)
   /** True from "restart accepted" until the host answers again (③). */
   const [restarting, setRestarting] = useState(false)
+  /**
+   * What this host can do about restarting (③). Fetched once per panel open:
+   * the desktop app cannot restart itself from a plugin, and the UI must not
+   * offer a button that only ends in an apology.
+   */
+  const [restartInfo, setRestartInfo] = useState<WorkbenchRestartPlan | null>(null)
   /** Whether the footer's full update history is expanded (③). */
   const [historyOpen, setHistoryOpen] = useState(false)
   /** Dialog element: the modal layer owns Escape, Tab trapping and focus return. */
@@ -712,6 +718,23 @@ export function WorkbenchPanel({
     const timer = window.setInterval(() => { void tick() }, 1_000)
     return () => { cancelled = true; window.clearInterval(timer) }
   }, [updating, loadProgress])
+
+  // Ask the Host once per open what it can do about restarting (③). A failure
+  // (older host without the route) leaves the info null and the UI simply does
+  // not offer the button — the click path still explains the skew.
+  useEffect(() => {
+    if (!open) return
+    let cancelled = false
+    void (async () => {
+      try {
+        const plan = await restartPlan()
+        if (!cancelled) setRestartInfo(plan)
+      } catch {
+        if (!cancelled) setRestartInfo(null)
+      }
+    })()
+    return () => { cancelled = true }
+  }, [open, restartPlan])
 
   const reload = useCallback(async () => {
     try {
@@ -949,12 +972,15 @@ export function WorkbenchPanel({
       return
     }
     if (!plan.relaunchable) {
+      // The plan carries no command for these hosts on purpose: the desktop
+      // child's own command line is only valid with the shell-injected env,
+      // and running it by hand is what turned advice into a crash loop.
       askConfirm({
-        title: '重启 dsh',
-        description: `${plan.note ?? '当前形态不支持面板内重启。'} 启动命令：${plan.command}`,
-        confirmLabel: '复制命令',
-        cancelLabel: '关闭',
-        onConfirm: () => { void copyPrompt(plan.command) },
+        title: '需要手动重启',
+        description: `${plan.note ?? '当前形态不支持面板内重启。'}${plan.externalAction !== undefined ? `（入口：${plan.externalAction}）` : ''}`,
+        confirmLabel: '知道了',
+        cancelLabel: null,
+        onConfirm: () => { /* informational only */ },
       })
       return
     }
@@ -966,7 +992,7 @@ export function WorkbenchPanel({
       danger: true,
       onConfirm: () => { void performRestart() },
     })
-  }, [restartPlan, askConfirm, copyPrompt, performRestart, actions, hostSupportsRestart])
+  }, [restartPlan, askConfirm, performRestart, actions, hostSupportsRestart])
 
   /** Persist a whole config; on success re-read state from the Host. */
   const persistConfig = useCallback(async (next: WorkbenchConfig): Promise<boolean> => {
@@ -1326,15 +1352,26 @@ export function WorkbenchPanel({
           {hostSupportsRestart === false && (
             <span className={css.skewBadge} title={HOST_SKEW_HINT}>服务端待重启</span>
           )}
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => { void runRestart() }}
-            disabled={updating || saving || restarting}
-            title={hostSupportsRestart === false ? HOST_SKEW_HINT : '结束并重新拉起 dsh；面板会等待服务恢复后自动刷新'}
-          >
-            {restarting ? '重启中…' : '重启 dsh'}
-          </Button>
+          {/* Only a host that can genuinely relaunch itself gets the button.
+              The desktop app cannot (its shell exposes no restart to plugin
+              processes), so there the badge names the real entry point
+              instead of offering a button that cannot work. */}
+          {restartInfo?.relaunchable === true && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => { void runRestart() }}
+              disabled={updating || saving || restarting}
+              title={restartInfo.note ?? '结束并重新拉起 dsh；面板会等待服务恢复后自动刷新'}
+            >
+              {restarting ? '重启中…' : '重启 dsh'}
+            </Button>
+          )}
+          {restartInfo !== null && restartInfo.relaunchable === false && (
+            <span className={css.skewBadge} title={restartInfo.note}>
+              {restartInfo.externalAction ?? '需手动重启'}
+            </span>
+          )}
           <Button size="sm" onClick={closePanel} aria-label="关闭工作台">✕</Button>
         </header>
 
