@@ -10,10 +10,10 @@ import { parse as parseYaml } from 'yaml'
 import type { Context } from '@deepseek-ai/cordis'
 import type { SkillCandidate, SkillDefinition, SkillLookupOptions, SkillProviderControl } from '@deepseek-ai/dsh-skill'
 import type {
-  WorkbenchConfig, WorkbenchInstalledSkill, WorkbenchItem, WorkbenchSkillImportRequest,
-  WorkbenchSkillList, WorkbenchSkillRemoveRequest, WorkbenchSkillSummary,
+  WorkbenchInstalledSkill, WorkbenchSkillImportRequest,
+  WorkbenchSkillList, WorkbenchSkillSummary,
 } from './shared.ts'
-import { DSH_HOME, WORKBENCH_STATE_DIR, run, truncate, cleanString } from './host-plumbing.ts'
+import { DSH_HOME, WORKBENCH_STATE_DIR, run } from './host-plumbing.ts'
 
 /** Skill name must match dsh-skill's kebab-case identifier rule. */
 const SKILL_NAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
@@ -23,16 +23,7 @@ const SKILL_NAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
  * a local directory would let anyone with route access clone off-disk stuff
  * into $DSH_HOME/skills. Ref (branch/tag) is validated separately.
  */
-
-/**
- * Git URL surface accepted by the import route: HTTP(S) and SSH forms only.
- * File paths (`file://`, plain absolute paths) are rejected — importing from
- * a local directory would let anyone with route access clone off-disk stuff
- * into $DSH_HOME/skills. Ref (branch/tag) is validated separately.
- */
 const GIT_URL_PATTERN = /^(https?:\/\/|git@[^\s:]+:|ssh:\/\/)/
-/** Branch / tag / short SHA — no shell metacharacters, no path separators. */
-
 /** Branch / tag / short SHA — no shell metacharacters, no path separators. */
 const GIT_REF_PATTERN = /^[A-Za-z0-9._/-]+$/
 
@@ -64,15 +55,11 @@ function translateGitError(url: string, message: string): string {
   ].join('\n')
 }
 
-/** $DSH_HOME resolution, matching what the launcher and other bundles use. */
-
 /** dsh-skill-filesystem user-dsh root (rank 400). Written by the install route. */
 const USER_DSH_SKILLS_DIR = join(DSH_HOME, 'skills')
-/** Workbench-owned state directory (installed-skill registry, workbench.json). */
 
 /** Staging root for shallow git clones during skill import; entries are removed after copy. */
 const IMPORT_STAGING_DIR = join(WORKBENCH_STATE_DIR, '.staging')
-/** Legacy config location — read once for backward-compat, then migrated. */
 
 /**
  * Skill versioning records (roadmap P3-20): one line per workbench-installed
@@ -107,8 +94,6 @@ function readInstalledRecords(): WorkbenchInstalledSkill[] {
 }
 
 /** Merge new/updated records by name and persist atomically (roadmap P3-20). */
-
-/** Merge new/updated records by name and persist atomically (roadmap P3-20). */
 function upsertInstalledRecords(incoming: WorkbenchInstalledSkill[]): void {
   if (incoming.length === 0) return
   const byName = new Map(readInstalledRecords().map(record => [record.name, record]))
@@ -123,8 +108,6 @@ function upsertInstalledRecords(incoming: WorkbenchInstalledSkill[]): void {
     // Best-effort: losing versioning metadata must not fail the install.
   }
 }
-
-/** Drop records whose names are gone (post-remove), atomic, best-effort. */
 
 /** Drop records whose names are gone (post-remove), atomic, best-effort. */
 function pruneInstalledRecords(names: readonly string[]): void {
@@ -142,13 +125,6 @@ function pruneInstalledRecords(names: readonly string[]): void {
 }
 
 /**
- * Roll the working tree back to the state before the last successful update
- * (roadmap P1-9): reset --hard to that entry's `before` SHA, rebuild the
- * bundle, and hot-inject. Refuses a dirty worktree — a reset would destroy
- * local edits. Never throws.
- */
-
-/**
  * Return the on-disk absolute path of a workbench-managed skill (directory
  * bundle preferred; flat markdown accepted for compatibility with the
  * dsh-skill-filesystem provider).
@@ -161,14 +137,6 @@ function findManagedSkillPath(name: string): string | undefined {
   if (existsSync(flat)) return flat
   return undefined
 }
-
-/**
- * Diagnostic payload for the "file on disk but not visible" case. Surfaces
- * both what our Host thinks is the user-dsh root and what dsh's own skill
- * registry returns from a live `snapshot()`, alongside relevant env vars.
- * When they diverge, the mismatch shape (path differs, catalog empty, or
- * both) tells us which layer to fix.
- */
 
 /**
  * Diagnostic payload for the "file on disk but not visible" case. Surfaces
@@ -224,13 +192,6 @@ async function buildSkillDebug(ctx: Context): Promise<Record<string, unknown>> {
  * $DSH_HOME/skills — those the install route wrote or the user placed by
  * hand under our root. Skills from project/agent/bundled sources are read-only.
  */
-
-/**
- * Assemble the GET /whaletv/workbench/skills payload from ctx.skills'
- * catalog. `removable` is true only for skills whose files live inside
- * $DSH_HOME/skills — those the install route wrote or the user placed by
- * hand under our root. Skills from project/agent/bundled sources are read-only.
- */
 async function buildSkillList(
   ctx: Context, records: readonly WorkbenchInstalledSkill[],
 ): Promise<WorkbenchSkillList> {
@@ -264,13 +225,6 @@ async function buildSkillList(
  * dsh-skill-filesystem watches this root, so the model-facing catalog picks
  * the new skill up on its next `agent/pre-step`.
  */
-
-/**
- * Write a skill definition into `$DSH_HOME/skills/<name>/SKILL.md` and add
- * its name to the installed-skills registry. Chokidar inside
- * dsh-skill-filesystem watches this root, so the model-facing catalog picks
- * the new skill up on its next `agent/pre-step`.
- */
 function installSkillOnDisk(name: string, content: string): string {
   if (!SKILL_NAME_PATTERN.test(name)) {
     throw new Error(`skill 名称必须为 kebab-case（^[a-z0-9]+(?:-[a-z0-9]+)*$），收到：${name}`)
@@ -283,24 +237,6 @@ function installSkillOnDisk(name: string, content: string): string {
   renameSync(tmp, target)
   return target
 }
-
-/**
- * Shallow-clone a git repo and copy the skill body inside it into
- * `$DSH_HOME/skills/<name>/`. Supports both bundle form
- * (`<subPath>/SKILL.md` + adjacent resource files copied wholesale) and flat
- * form (`<subPath>.md` copied to `<name>.md`).
- *
- * Safety:
- *   - URL is restricted to http(s) / ssh — no `file://` or local paths.
- *   - `--` before the URL and dest prevents git from interpreting them as flags.
- *   - Ref is checked against `GIT_REF_PATTERN` — no `--upload-pack=` injection.
- *   - Resolved source path is verified to stay inside the staging tree so a
- *     malicious sub-path can't escape via `../..`.
- *   - Staging clone is removed on both success and failure.
- *
- * @returns installed names, per-skill source sub-paths (versioning records,
- *   roadmap P3-20), source head SHA, and captured git output
- */
 
 /**
  * Shallow-clone a git repo and copy the skill body inside it into
@@ -487,26 +423,9 @@ async function importSkillFromGit(
  * are exactly designed for this scenario. `force: true` also overrides
  * the read-only bit git sets on pack files.
  */
-
-/**
- * Windows-friendly recursive delete: retry with a short delay so Node's
- * fs.rmSync can win the race against git.exe / antivirus still holding
- * handles on freshly-written `.git/pack/*` files right after clone.
- *
- * `maxRetries` + `retryDelay` are documented options on Node ≥ 14.14 and
- * are exactly designed for this scenario. `force: true` also overrides
- * the read-only bit git sets on pack files.
- */
 function removeStagingSafely(path: string): void {
   rmSync(path, { recursive: true, force: true, maxRetries: 8, retryDelay: 250 })
 }
-
-/**
- * Sweep any stale `skill-*` directories left behind by past failed clones
- * (Windows file-lock timing, dsh crashed mid-import, etc.). Runs once on
- * plugin mount as a best-effort — a single retry cycle here is enough
- * because whatever process was holding handles is long gone by now.
- */
 
 /**
  * Sweep any stale `skill-*` directories left behind by past failed clones
@@ -523,13 +442,6 @@ function sweepStagingDir(): void {
     }
   } catch { /* ignore — sweep is best-effort */ }
 }
-
-/**
- * Copy one bundle directory into $DSH_HOME/skills/<name>/, dropping any
- * `.git` remains from the shallow clone. `staging` is only used to help
- * the filter recognize the git dir path prefix — everything is otherwise
- * relative to `srcDir`.
- */
 
 /**
  * Copy one bundle directory into $DSH_HOME/skills/<name>/, dropping any
@@ -555,33 +467,11 @@ function installBundleDir(srcDir: string, dest: string, staging: string): void {
  * `batch`  = a parent directory whose immediate children are each a bundle.
  * `none`   = no valid target — the caller throws.
  */
-
-/**
- * Skill-source shape after resolving what the user's URL+sub-path pointed at.
- * `bundle` = one SKILL.md-anchored directory to copy wholesale.
- * `flat`   = a single `.md` file to copy as `<name>.md`.
- * `batch`  = a parent directory whose immediate children are each a bundle.
- * `none`   = no valid target — the caller throws.
- */
 type SkillSource =
   | { kind: 'bundle'; dir: string }
   | { kind: 'flat'; file: string }
   | { kind: 'batch'; root: string; children: readonly string[] }
   | { kind: 'none' }
-
-/**
- * Classify the cloned tree at `source` (may be a file or a directory).
- *
- * When source is a file:
- *   - `.../SKILL.md` → bundle (walk up one level to the enclosing dir)
- *   - `.../*.md` (any other markdown) → flat
- *   - otherwise → none
- *
- * When source is a directory:
- *   - `<source>/SKILL.md` exists → single bundle
- *   - one or more `<source>/<child>/SKILL.md` exists → batch (list children)
- *   - otherwise → none
- */
 
 /**
  * Classify the cloned tree at `source` (may be a file or a directory).
@@ -632,21 +522,9 @@ function resolveSkillSource(source: string, stat: Stats): SkillSource {
  * quirk, chokidar didn't fire on Windows), ours still surfaces the file
  * — which is the reason this provider exists at all.
  */
-
-/**
- * Rank at which our workbench-owned provider announces its skills.
- *
- * dsh-skill-filesystem's `user-dsh` root sits at rank 400; we register at
- * 450 so when both providers work the built-in wins duplicate names by
- * rank. When dsh's provider isn't functioning (missing config, schema
- * quirk, chokidar didn't fire on Windows), ours still surfaces the file
- * — which is the reason this provider exists at all.
- */
 const WORKBENCH_PROVIDER_RANK = 450
 
 const WORKBENCH_PROVIDER_NAME = 'whaletv-workbench-user-dsh'
-
-/** YAML frontmatter fields the panel and the model catalog care about. */
 
 /** YAML frontmatter fields the panel and the model catalog care about. */
 interface SkillFrontmatter {
@@ -656,12 +534,6 @@ interface SkillFrontmatter {
   disableModelInvocation?: boolean
   userInvocable?: boolean
 }
-
-/**
- * Parse the leading YAML frontmatter block of a SKILL.md. Returns empty
- * front + full body when the file lacks frontmatter, so downstream logic
- * can still surface the skill under its directory / filename identity.
- */
 
 /**
  * Parse the leading YAML frontmatter block of a SKILL.md. Returns empty
@@ -687,13 +559,6 @@ function parseFrontmatter(raw: string): { front: SkillFrontmatter; body: string 
     return { front: {}, body: raw }
   }
 }
-
-/**
- * Scan `$DSH_HOME/skills` for the two skill shapes dsh accepts:
- *   - `<name>/SKILL.md` bundle (returned with `resourcePath` = the dir)
- *   - `<name>.md` flat file
- * Names must be kebab-case; everything else is skipped without noise.
- */
 
 /**
  * Scan `$DSH_HOME/skills` for the two skill shapes dsh accepts:
@@ -731,15 +596,6 @@ function discoverWorkbenchSkills(): WorkbenchSkillEntry[] {
   }
   return results
 }
-
-/**
- * Register a workbench-owned skill provider scanning `$DSH_HOME/skills`.
- * Held in a closure so the write routes can `invalidate()` after modifying
- * the folder — dsh-skill-filesystem's chokidar can miss fresh writes on
- * Windows, so an explicit invalidation makes catalog updates deterministic.
- *
- * @returns the invalidator, callable by handlers after a disk mutation.
- */
 
 /**
  * Register a workbench-owned skill provider scanning `$DSH_HOME/skills`.
@@ -801,38 +657,25 @@ function registerWorkbenchSkillProvider(ctx: Context): { invalidate: () => void 
  * Remove a workbench-installed skill directory. Refuses to touch anything
  * outside `$DSH_HOME/skills` — the only place install writes to.
  */
-
-/**
- * Remove a workbench-installed skill directory. Refuses to touch anything
- * outside `$DSH_HOME/skills` — the only place install writes to.
- */
 function removeSkillOnDisk(name: string): void {
   if (!SKILL_NAME_PATTERN.test(name)) {
     throw new Error(`skill 名称必须为 kebab-case，收到：${name}`)
   }
   const bundleDir = join(USER_DSH_SKILLS_DIR, name)
   const flat = join(USER_DSH_SKILLS_DIR, `${name}.md`)
-  // Prefer bundle removal when both shapes exist.
+  // Prefer bundle removal when both shapes exist. Same retry posture as the
+  // staging sweep: git.exe / antivirus can hold handles on freshly-written
+  // files, and a bare rmSync loses that race on Windows.
   if (existsSync(bundleDir) && statSync(bundleDir).isDirectory()) {
-    rmSync(bundleDir, { recursive: true, force: true })
+    rmSync(bundleDir, { recursive: true, force: true, maxRetries: 8, retryDelay: 250 })
     return
   }
   if (existsSync(flat)) {
-    rmSync(flat, { force: true })
+    rmSync(flat, { force: true, maxRetries: 8, retryDelay: 250 })
     return
   }
   throw new Error(`未找到 skill：${name}（工作台只能删除自己写入 $DSH_HOME/skills 的 skill）`)
 }
-
-/**
- * Route a follow-up prompt into an existing live agent's inbox.
- *
- * Prefers the client-supplied sessionId; falls back to
- * `ctx.agents.currentInitiator()` which is only meaningful when the caller
- * itself already runs inside an agent-scoped async chain — usually not the
- * case for an HTTP handler, so browsers should pass sessionId whenever the
- * visible session id is known.
- */
 
 export {
   sweepStagingDir, registerWorkbenchSkillProvider, buildSkillList, buildSkillDebug,

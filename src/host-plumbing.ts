@@ -15,38 +15,12 @@ import os from 'node:os'
 const CLIENT_ID = 'whaletv-workbench'
 
 /** This package's root directory (lib/index.js → lib → package root). */
-
-/** This package's root directory (lib/index.js → lib → package root). */
 const PACKAGE_DIR = dirname(dirname(fileURLToPath(import.meta.url)))
-
-/**
- * All workbench routes live under this prefix. One `kind: 'prefix'`
- * registration owns dispatch on the sub-path, reducing seven separate
- * registrations to a single disposer.
- */
 
 /** Output captured per update step, truncated so JSON responses stay small. */
 const MAX_STEP_OUTPUT = 32_000
 
-/** Upper bounds for the payload the two JSON write routes accept. */
-
 const execFileAsync = promisify(execFile)
-
-/**
- * pnpm 11 propagates its own workspace flags as `NPM_CONFIG_*` env vars
- * (chiefly `NPM_CONFIG_MANAGE_PACKAGE_MANAGER_VERSIONS`), which npm 11
- * warns about as an unknown env config. Strip the known offenders before
- * spawning any child so the noise never leaks into the plugin's captured
- * output. Only pnpm's own subprocesses need this var; dropping it at the
- * boundary does not disable the pnpm feature — pnpm still honors its
- * pnpm-workspace.yaml / .npmrc config sources inside the child.
- *
- * Also force git into non-interactive mode: our plugin subprocess has no
- * tty, so any credential prompt (git-credential-manager, ask-pass) hangs or
- * crashes. Setting `GIT_TERMINAL_PROMPT=0` + `GCM_INTERACTIVE=Never` makes
- * git fail fast with a readable "could not read Username" message when a
- * private repo needs auth that isn't already cached.
- */
 
 /**
  * pnpm 11 propagates its own workspace flags as `NPM_CONFIG_*` env vars
@@ -76,18 +50,8 @@ function sanitizedEnv(): NodeJS.ProcessEnv {
   return env
 }
 
-/**
- * Recognize git errors that come from "no cached credentials for a private
- * repo" and the OAuth 2.0 `invalid_client` family enterprise GitHub returns
- * when SSO / OIDC rejects the HTTP Basic auth git tried. These are the
- * exact strings git / GCM / the OAuth server emit. When one hits we
- * replace the raw output with an actionable message pointing at the two
- * viable workarounds (SSH with configured keys, or an SSO-authorized PAT).
- */
-
 /** $DSH_HOME resolution, matching what the launcher and other bundles use. */
 const DSH_HOME = process.env.DSH_HOME ?? join(os.homedir(), '.dsh')
-/** dsh-skill-filesystem user-dsh root (rank 400). Written by the install route. */
 
 /** Workbench-owned state directory (installed-skill registry, workbench.json). */
 const WORKBENCH_STATE_DIR = join(DSH_HOME, 'whaletv-workbench')
@@ -102,12 +66,6 @@ function spawnOptions(command: string): { shell: boolean } {
   const needsShell = process.platform === 'win32' && (command === 'pnpm' || command === 'npm')
   return { shell: needsShell }
 }
-
-/**
- * Run one command; returns merged trimmed output. Defaults cwd to this
- * plugin's package dir (where git operations for self-update live), but the
- * skill-import route overrides cwd so clones happen in the staging root.
- */
 
 /**
  * Run one command; returns merged trimmed output. Defaults cwd to this
@@ -133,8 +91,6 @@ async function run(command: string, args: string[], cwd: string = PACKAGE_DIR): 
 }
 
 /** git output, or undefined when the directory is not a git work tree. */
-
-/** git output, or undefined when the directory is not a git work tree. */
 async function git(args: string[]): Promise<string | undefined> {
   try {
     return await run('git', args)
@@ -144,19 +100,10 @@ async function git(args: string[]): Promise<string | undefined> {
 }
 
 /** Trim one step's captured output to the response budget. */
-
-/** Trim one step's captured output to the response budget. */
 function truncate(output: string): string {
   if (output.length <= MAX_STEP_OUTPUT) return output
   return `${output.slice(0, MAX_STEP_OUTPUT)}\n… (已截断)`
 }
-
-/**
- * Read the entry config: `$DSH_HOME/whaletv-workbench/workbench.json` when
- * present, falling back to the legacy plugin-dir path once (with implicit
- * migration to the new location), then the shipped template. A broken file
- * renders as a single error group so the panel remains usable.
- */
 
 /**
  * Collect a request body with a size cap. Resolves the parsed JSON; rejects
@@ -200,20 +147,11 @@ function readJsonBody(req: IncomingMessage, maxBytes: number): Promise<unknown> 
  * Trim a string field: non-strings and blank strings collapse to undefined
  * (the field is dropped from the persisted item).
  */
-
-/**
- * Trim a string field: non-strings and blank strings collapse to undefined
- * (the field is dropped from the persisted item).
- */
 function cleanString(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined
   const trimmed = value.trim()
   return trimmed === '' ? undefined : trimmed
 }
-
-/**
- * Validate and normalize a raw WorkbenchConfig payload.
- */
 
 /** Read this package's version from its manifest. */
 function readVersion(): string {
@@ -225,8 +163,6 @@ function readVersion(): string {
   }
 }
 
-/** Assemble the GET /whaletv/workbench/state payload. */
-
 /** Send one JSON response with a UTF-8 content type. */
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
   const payload = JSON.stringify(body)
@@ -237,13 +173,6 @@ function sendJson(res: ServerResponse, status: number, body: unknown): void {
   })
   res.end(payload)
 }
-
-/**
- * Run the self-update pipeline and record the attempt into the rolling
- * history (roadmap P1-9). Never throws: every failure returns an
- * actionable { ok: false, error } result. History writes are best-effort —
- * a broken updates.json must never turn a good update into a panel error.
- */
 
 export {
   CLIENT_ID, PACKAGE_DIR, MAX_STEP_OUTPUT, execFileAsync, sanitizedEnv, run, git,

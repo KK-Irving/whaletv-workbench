@@ -2,6 +2,49 @@
 
 Notable changes per version. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) loosely; pre-1.0 minor bumps carry feature-level changes because the API surface is still shaping up.
 
+## 0.8.3 — 2026-09-30
+
+Hygiene release: two real cache/perf fixes plus a full dead-code sweep
+surfaced by turning on `noUnusedLocals`.
+
+### Fixed
+
+- **favicon proxy cache never hit.** Lookups probed `<hash>.ico` while saves
+  wrote `<hash>.<content-type ext>` — every panel render re-fetched the icon
+  and rewrote it. Lookup now scans the icon directory by hash prefix, and
+  failures write a 7-day `<hash>.miss` negative marker, so a dead icon costs
+  one fetch per TTL window instead of one per render.
+- **`GET /health` probed entries sequentially** — a config with many slow or
+  offline URLs stretched the route into minutes (5s timeout × N entries).
+  Probes now run with bounded concurrency (8).
+- `removeSkillOnDisk` uses the same `maxRetries`/`retryDelay` rmSync posture
+  as the staging sweep; a bare rmSync could lose the Windows file-handle
+  race against git.exe / antivirus.
+
+### Changed
+
+- **Removed the never-consumed Config fields `gitRemote` / `customSkillDirs`**
+  — settings-page visible since dsh 0.1.7 but read by nothing (the update
+  channel uses `git remote get-url origin` and `updateRepo` only).
+- **Removed the dead `onRemove` plumbing in the skills UI** (the delete
+  button was deliberately removed in ddcf42f; the Host `/skills/remove`
+  route and the `removeSkill` transport action stay for future reinstatement).
+- Stale copy/docs aligned with the v0.8.1 direct-`pnpm add` tarball update
+  (panel banner, `shared.ts` field docs, README, `update.ts` module doc).
+
+### Cleaned
+
+- Deleted the v0.8.0 split leftovers: `src/index.ts.pre-split.bak`, 51
+  adjacent-duplicate docblocks, and 12 orphaned comment blocks left at the
+  old partition boundaries.
+- Enabled `noUnusedLocals` / `noUnusedParameters` (target aligned to ES2024,
+  obsolete tsconfig `paths` workaround removed) and removed everything they
+  surfaced: ~10 dead imports in `src/index.ts`, the orphaned
+  `TarballPluginManager` / `pluginManagerLike` seam in `update.ts`, unused
+  type imports across the client half, and `clsx` in `SkillsSection`.
+  `WorkbenchUsageRecordResult` — previously a dead type — is now wired into
+  its only caller.
+
 ## 0.8.2 — 2026-09-30
 
 Cleanup release: dead dependency removal and documentation refresh.

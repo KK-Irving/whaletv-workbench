@@ -1,9 +1,10 @@
 /**
  * Self-update domain (roadmap P1): git-checkout pipeline, tarball channel
- * via the dsh plugin-manager, version probe fallback chain, history,
- * skip-marker state and rollback. Split out of index.ts in v0.8.0.
+ * (direct `pnpm add github:<repo>` since v0.8.1), version probe fallback
+ * chain, history, skip-marker state and rollback. Split out of index.ts in
+ * v0.8.0.
  */
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import type {
@@ -19,10 +20,7 @@ const UPDATE_HISTORY_PATH = join(WORKBENCH_STATE_DIR, 'updates.json')
 
 const MAX_HISTORY_ENTRIES = 20
 /** How many incoming commits the update checker lists. */
-
-/** How many incoming commits the update checker lists. */
 const MAX_CHECK_COMMITS = 20
-/** SHA accepted by the skip route: short (≥7) or full hex. */
 
 /**
  * Small update-checker state (roadmap P1-10): the skipped upstream head.
@@ -31,7 +29,6 @@ const MAX_CHECK_COMMITS = 20
  * runtime bookkeeping.
  */
 const UPDATE_STATE_PATH = join(WORKBENCH_STATE_DIR, 'update-state.json')
-/** Per-probe timeout for the reachability checker (roadmap P2-16). */
 
 /**
  * Run the self-update pipeline and record the attempt into the rolling
@@ -54,12 +51,6 @@ async function runUpdate(ctx: Context, updateRepo: string): Promise<WorkbenchUpd
   })
   return result
 }
-
-/**
- * The update pipeline proper (no history side effects): git checkouts run
- * pull → install → bundle → hot-inject; tarball installs (no .git) hand the
- * update to the dsh plugin-manager (roadmap v0.7.4).
- */
 
 /**
  * The update pipeline proper (no history side effects): git checkouts run
@@ -125,49 +116,6 @@ async function runUpdatePipeline(ctx: Context, updateRepo: string): Promise<Work
     return { ok: false, error: truncate(String(error instanceof Error ? error.message : error)) }
   }
 }
-
-/**
- * The dsh plugin-manager service (dsh-base composes it on every 0.1.7 host),
- * read structurally — this file deliberately carries no dsh-plugin-manager
- * type dependency (its surface is still stabilizing).
- */
-
-/**
- * The dsh plugin-manager service (dsh-base composes it on every 0.1.7 host),
- * read structurally — this file deliberately carries no dsh-plugin-manager
- * type dependency (its surface is still stabilizing).
- */
-interface TarballPluginManager {
-  installBundle?: (spec: string, options?: { approvedBuilds?: string[] }) => Promise<{
-    changed: boolean
-    application: 'applied' | 'restart-required' | 'overridden' | 'failed' | 'cancelled'
-    warnings?: string[]
-    packageResult?: { output?: string; kind?: string }
-    error?: { code?: string; diagnostic?: string }
-    failedAt?: string
-    target?: string
-    stage?: string
-  }>
-}
-
-/** Read `ctx.pluginManager` through the structural face; undefined when absent. */
-
-/** Read `ctx.pluginManager` through the structural face; undefined when absent. */
-function pluginManagerLike(ctx: Context): TarballPluginManager | undefined {
-  try {
-    return (ctx as { pluginManager?: TarballPluginManager }).pluginManager
-  } catch {
-    return undefined
-  }
-}
-
-/**
- * Volatile Config fields (dsh ≥ 0.1.7 live-editable settings) resolve to
- * accessor objects with a `.get()` method rather than plain values — unwrap
- * before use. THE `updateRepo` BUG (v0.7.4–0.7.6): the raw accessor object
- * was interpolated into the probe URLs, so every source was asked for
- * `https://.../[object Object]/...` and answered 404/400/403.
- */
 
 /**
  * Fetch the update repo's default-branch package.json version (tarball update
@@ -238,8 +186,6 @@ async function fetchLatestTarballVersion(repo: string): Promise<{ version?: stri
 }
 
 /** Pull the semver `version` field out of a package.json document. */
-
-/** Pull the semver `version` field out of a package.json document. */
 function parseVersionField(packageJson: string): string | undefined {
   try {
     const version = (JSON.parse(packageJson) as { version?: unknown }).version
@@ -248,8 +194,6 @@ function parseVersionField(packageJson: string): string | undefined {
     return undefined
   }
 }
-
-/** Whether `latest` is strictly newer than `installed` (x.y.z[, -prerelease] aware). */
 
 /** Whether `latest` is strictly newer than `installed` (x.y.z[, -prerelease] aware). */
 function isSemverGt(latest: string, installed: string): boolean {
@@ -291,14 +235,6 @@ async function runTarballUpdate(ctx: Context, repo: string): Promise<WorkbenchUp
     return { ok: false, tarball: true, error: truncate(`pnpm add ${spec} 失败：${String(error instanceof Error ? error.message : error)}`) }
   }
 }
-
-/**
- * Update checker (roadmap P1-8): fetch the origin remote and compare HEAD
- * against its upstream — ahead/behind counts plus the newest incoming commit
- * subjects — without touching the working tree. `skippedHead` is the user's
- * skip marker; when the remote head equals it the result is flagged so the
- * panel can show "skipped" instead of nagging. Never throws.
- */
 
 /**
  * Update checker (roadmap P1-8): fetch the origin remote and compare HEAD
@@ -382,8 +318,6 @@ async function runUpdateCheck(skippedHead: string, updateRepo: string): Promise<
 }
 
 /** Read the rolling update history; a missing/corrupt file is simply empty. */
-
-/** Read the rolling update history; a missing/corrupt file is simply empty. */
 function readUpdateHistory(): WorkbenchUpdateHistoryEntry[] {
   try {
     const parsed = JSON.parse(readFileSync(UPDATE_HISTORY_PATH, 'utf8')) as { entries?: unknown }
@@ -399,8 +333,6 @@ function readUpdateHistory(): WorkbenchUpdateHistoryEntry[] {
 }
 
 /** Append one attempt to the rolling history (newest first), capped, atomic. */
-
-/** Append one attempt to the rolling history (newest first), capped, atomic. */
 function appendUpdateHistory(entry: WorkbenchUpdateHistoryEntry): void {
   try {
     const entries = [entry, ...readUpdateHistory()].slice(0, MAX_HISTORY_ENTRIES)
@@ -412,8 +344,6 @@ function appendUpdateHistory(entry: WorkbenchUpdateHistoryEntry): void {
     // Best-effort: history loss is acceptable, update failures are not.
   }
 }
-
-/** Read the skill versioning records (roadmap P3-20); missing file is empty. */
 
 /**
  * Roll the working tree back to the state before the last successful update
@@ -457,8 +387,6 @@ async function runUpdateRollback(ctx: Context): Promise<WorkbenchUpdateRollbackR
 }
 
 /** Read the skipped-head marker (roadmap P1-10); missing file is empty. */
-
-/** Read the skipped-head marker (roadmap P1-10); missing file is empty. */
 function readSkippedHead(): string {
   try {
     const parsed = JSON.parse(readFileSync(UPDATE_STATE_PATH, 'utf8')) as unknown
@@ -468,8 +396,6 @@ function readSkippedHead(): string {
     return ''
   }
 }
-
-/** Persist the skipped-head marker atomically; best-effort. */
 
 /** Persist the skipped-head marker atomically; best-effort. */
 function writeSkippedHead(sha: string): void {
@@ -482,11 +408,6 @@ function writeSkippedHead(sha: string): void {
     // Losing the skip marker only re-arms a reminder — never fail the flow.
   }
 }
-
-/**
- * Clear the skip marker after a successful update moved to a new head — the
- * reminder re-arms for whatever comes next. Best-effort; never throws.
- */
 
 /**
  * Clear the skip marker after a successful update moved to a new head — the

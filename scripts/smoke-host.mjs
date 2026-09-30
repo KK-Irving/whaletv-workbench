@@ -105,7 +105,7 @@ try {
       configure: () => () => {},
     },
   }
-  mod.apply(ctx, { gitRemote: '', customSkillDirs: [], installedSkills: [], skippedHead: '' })
+  mod.apply(ctx, { updateRepo: 'KK-Irving/whaletv-workbench', installedSkills: [], skippedHead: '' })
 
   if (registered.length !== 1) throw new Error(`expected 1 route registration, got ${registered.length}`)
   const [route] = registered

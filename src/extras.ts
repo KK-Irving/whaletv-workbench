@@ -2,7 +2,7 @@
  * Panel-data extras (roadmap P2): launch-usage ledger, entry reachability
  * probes and the per-origin favicon proxy. Split out of index.ts in v0.8.0.
  */
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 import type { WorkbenchConfig, WorkbenchItem } from './shared.ts'
@@ -15,17 +15,9 @@ import { WORKBENCH_STATE_DIR } from './host-plumbing.ts'
 const USAGE_PATH = join(WORKBENCH_STATE_DIR, 'usage.json')
 
 const MAX_USAGE_ENTRIES = 500
-/**
- * Skill versioning records (roadmap P3-20): one line per workbench-installed
- * skill with its Git origin / SHA / sub-path, enabling the per-skill
- * "检查更新" (P3-21). Plain Host-owned JSON — not a settings field — so the
- * settings schema stays flat and old user layers never need migrating.
- */
 
 /** Per-probe timeout for the reachability checker (roadmap P2-16). */
 const HEALTH_TIMEOUT_MS = 5_000
-/** Favicon cache (roadmap P2-17): per-origin icons under the state dir. */
-
 /** Favicon cache (roadmap P2-17): per-origin icons under the state dir. */
 const ICON_DIR = join(WORKBENCH_STATE_DIR, 'icons')
 
@@ -36,28 +28,12 @@ const ICON_MAX_BYTES = 512 * 1024
  * fetching intranet URLs. DNS rebinding is out of scope for a 127.0.0.1
  * tool (documented tradeoff, mirrors the git-import URL posture).
  */
-
-/**
- * Hostnames the favicon proxy refuses: loopback / link-local / RFC1918
- * literals and localhost. A local dashboard could otherwise be talked into
- * fetching intranet URLs. DNS rebinding is out of scope for a 127.0.0.1
- * tool (documented tradeoff, mirrors the git-import URL posture).
- */
 const PRIVATE_HOST_PATTERN = /^(localhost|127\.|0\.|10\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.|\[::1\]$|\[fc|\[fd|\[fe80)/i
-
-/**
- * Resolve spawn options for this platform: npm/pnpm are .cmd shims on
- * Windows and must run through the shell; git.exe spawns directly.
- * @param command - bare command name (git / pnpm).
- * @returns the execFile options for one invocation.
- */
 
 interface UsageRecord {
   count: number
   lastUsed: string
 }
-
-/** Read the usage ledger; a missing/corrupt file is simply empty. */
 
 /** Read the usage ledger; a missing/corrupt file is simply empty. */
 function readUsage(): Record<string, UsageRecord> {
@@ -76,8 +52,6 @@ function readUsage(): Record<string, UsageRecord> {
     return {}
   }
 }
-
-/** Increment one item's launch counter, pruning the ledger to the most recent ids. */
 
 /** Increment one item's launch counter, pruning the ledger to the most recent ids. */
 function recordUsage(itemId: string): void {
@@ -100,11 +74,6 @@ function recordUsage(itemId: string): void {
     // Best-effort telemetry for a UI rail — never fail the launch itself.
   }
 }
-
-/**
- * One entry's reachability probe (roadmap P2-16): HEAD with a GET fallback
- * for sites that reject HEAD (403/405), path existence for local targets.
- */
 
 /**
  * One entry's reachability probe (roadmap P2-16): HEAD with a GET fallback
@@ -137,23 +106,27 @@ async function checkEntryHealth(item: WorkbenchItem): Promise<{ ok: boolean; det
   return { ok: false, detail: '未配置目标' }
 }
 
-/** Probe every entry in the config (roadmap P2-16), keyed by item id. */
+/** Probe every entry in the config (roadmap P2-16), keyed by item id.
+ *
+ * Probes run with bounded concurrency: the original loop awaited each entry
+ * in turn, so a config with many slow/offline URLs stretched GET /health
+ * into minutes (5s timeout × N entries). */
+const HEALTH_CONCURRENCY = 8
 
-/** Probe every entry in the config (roadmap P2-16), keyed by item id. */
 async function runHealthCheck(config: WorkbenchConfig): Promise<Record<string, { ok: boolean; detail?: string }>> {
+  const items = config.groups.flatMap(group => group.items)
   const results: Record<string, { ok: boolean; detail?: string }> = {}
-  for (const group of config.groups) {
-    for (const item of group.items) {
+  let cursor = 0
+  const worker = async (): Promise<void> => {
+    while (cursor < items.length) {
+      const item = items[cursor]
+      cursor += 1
       results[item.id] = await checkEntryHealth(item)
     }
   }
+  await Promise.all(Array.from({ length: Math.min(HEALTH_CONCURRENCY, items.length) }, worker))
   return results
 }
-
-/**
- * Whether a favicon origin may be fetched: http(s) only, non-private host.
- * @returns an error reason, or undefined when allowed.
- */
 
 /**
  * Whether a favicon origin may be fetched: http(s) only, non-private host.
@@ -172,12 +145,9 @@ function faviconOriginError(origin: string): string | undefined {
   return undefined
 }
 
-/** Per-origin cache filename for the favicon proxy. */
-
-/** Per-origin cache filename for the favicon proxy. */
-function faviconFile(origin: string): string {
-  const hash = createHash('sha1').update(origin).digest('hex').slice(0, 16)
-  return join(ICON_DIR, `${hash}.ico`)
+/** Hash prefix shared by an origin's cache file and its negative marker. */
+function faviconHash(origin: string): string {
+  return createHash('sha1').update(origin).digest('hex').slice(0, 16)
 }
 
 const FAVICON_MIME_BY_EXT: Record<string, string> = {
@@ -191,17 +161,55 @@ const FAVICON_MIME_BY_EXT: Record<string, string> = {
 }
 
 /**
- * Serve a cached favicon for the given origin (roadmap P2-17), downloading
- * `<origin>/favicon.ico` on first use. Cache-forever per origin (the file is
- * content-addressed by origin); 404 when uncached and unfetchable — the
- * panel hides the img on error.
+ * Locate an origin's cached artifact by hash prefix. Saves write
+ * `<hash>.<content-type ext>` — png/svg/whatever — so lookup must scan the
+ * directory instead of probing one hardcoded extension. The original
+ * `faviconFile` looked for `<hash>.ico` while non-ico saves landed at
+ * `<hash>.png`, so every request missed and re-fetched.
  */
+function findFaviconArtifact(origin: string, miss: boolean): string | undefined {
+  const hash = faviconHash(origin)
+  let entries: string[]
+  try {
+    if (!existsSync(ICON_DIR)) return undefined
+    entries = readdirSync(ICON_DIR)
+  } catch {
+    return undefined
+  }
+  const match = entries.find(name => {
+    const dot = name.lastIndexOf('.')
+    if (dot <= 0 || name.slice(0, dot) !== hash) return false
+    const ext = name.slice(dot)
+    return miss ? ext === '.miss' : ext !== '.miss' && ext in FAVICON_MIME_BY_EXT
+  })
+  return match === undefined ? undefined : join(ICON_DIR, match)
+}
+
+/** How long a "no favicon here" marker stands before the next attempt. */
+const FAVICON_MISS_TTL_MS = 7 * 24 * 60 * 60 * 1000
+
+function missMarkerIsFresh(marker: string): boolean {
+  try {
+    return Date.now() - statSync(marker).mtimeMs < FAVICON_MISS_TTL_MS
+  } catch {
+    return false
+  }
+}
+
+/** Record (or refresh) the origin's negative marker; best-effort. */
+function writeMissMarker(origin: string): void {
+  try {
+    writeFileSync(join(ICON_DIR, `${faviconHash(origin)}.miss`), '')
+  } catch { /* a lost marker only costs one re-fetch */ }
+}
 
 /**
  * Serve a cached favicon for the given origin (roadmap P2-17), downloading
- * `<origin>/favicon.ico` on first use. Cache-forever per origin (the file is
- * content-addressed by origin); 404 when uncached and unfetchable — the
- * panel hides the img on error.
+ * `<origin>/favicon.ico` on first use. Successful responses cache-forever
+ * per origin (content-addressed by origin hash); failures write a
+ * `.miss` negative marker (TTL below) so a dead icon costs one fetch per
+ * TTL window instead of one per panel render — the panel hides the img on
+ * error.
  */
 async function serveFavicon(url: string): Promise<{ status: number; contentType: string; body: Buffer; cache: string }> {
   const originError = faviconOriginError(url)
@@ -209,8 +217,8 @@ async function serveFavicon(url: string): Promise<{ status: number; contentType:
     return { status: 400, contentType: 'text/plain; charset=utf-8', body: Buffer.from(originError), cache: 'no-store' }
   }
   mkdirSync(ICON_DIR, { recursive: true })
-  const cached = faviconFile(url)
-  if (existsSync(cached)) {
+  const cached = findFaviconArtifact(url, false)
+  if (cached !== undefined) {
     const ext = cached.slice(cached.lastIndexOf('.'))
     return {
       status: 200,
@@ -219,38 +227,40 @@ async function serveFavicon(url: string): Promise<{ status: number; contentType:
       cache: 'public, max-age=604800',
     }
   }
+  const missMarker = findFaviconArtifact(url, true)
+  if (missMarker !== undefined && missMarkerIsFresh(missMarker)) {
+    return { status: 404, contentType: 'text/plain; charset=utf-8', body: Buffer.from('favicon 不可用'), cache: 'no-store' }
+  }
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), HEALTH_TIMEOUT_MS)
+  const fail = (detail: string): { status: 404; contentType: string; body: Buffer; cache: string } => {
+    writeMissMarker(url)
+    return { status: 404, contentType: 'text/plain; charset=utf-8', body: Buffer.from(detail), cache: 'no-store' }
+  }
   try {
     const response = await fetch(new URL('/favicon.ico', url), { signal: controller.signal, redirect: 'follow' })
-    if (!response.ok) {
-      return { status: 404, contentType: 'text/plain; charset=utf-8', body: Buffer.from('favicon 不可用'), cache: 'no-store' }
-    }
+    if (!response.ok) return fail('favicon 不可用')
     const contentType = (response.headers.get('content-type') ?? '').split(';')[0]?.trim() ?? ''
     const ext = Object.entries(FAVICON_MIME_BY_EXT).find(([, mime]) => mime === contentType)?.[0] ?? '.ico'
     const buffer = Buffer.from(await response.arrayBuffer())
-    if (buffer.length === 0 || buffer.length > ICON_MAX_BYTES) {
-      return { status: 404, contentType: 'text/plain; charset=utf-8', body: Buffer.from('favicon 尺寸异常'), cache: 'no-store' }
+    if (buffer.length === 0 || buffer.length > ICON_MAX_BYTES) return fail('favicon 尺寸异常')
+    // A stale artifact under a different extension (origin switched icon
+    // type) or an expired miss marker must not survive a fresh save.
+    const target = join(ICON_DIR, `${faviconHash(url)}${ext}`)
+    for (const name of readdirSync(ICON_DIR)) {
+      const artifact = join(ICON_DIR, name)
+      if (artifact !== target) {
+        const dot = name.lastIndexOf('.')
+        if (dot > 0 && name.slice(0, dot) === faviconHash(url)) rmSync(artifact, { force: true })
+      }
     }
-    const target = cached.slice(0, cached.lastIndexOf('.')) + ext
     writeFileSync(target, buffer)
     return { status: 200, contentType: contentType !== '' ? contentType : 'image/x-icon', body: buffer, cache: 'public, max-age=604800' }
   } catch (error) {
-    return {
-      status: 404,
-      contentType: 'text/plain; charset=utf-8',
-      body: Buffer.from(`favicon 抓取失败：${error instanceof Error ? error.message : String(error)}`),
-      cache: 'no-store',
-    }
+    return fail(`favicon 抓取失败：${error instanceof Error ? error.message : String(error)}`)
   } finally {
     clearTimeout(timer)
   }
 }
-
-/**
- * Return the on-disk absolute path of a workbench-managed skill (directory
- * bundle preferred; flat markdown accepted for compatibility with the
- * dsh-skill-filesystem provider).
- */
 
 export { readUsage, recordUsage, runHealthCheck, serveFavicon }

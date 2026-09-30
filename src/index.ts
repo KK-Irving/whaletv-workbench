@@ -35,18 +35,11 @@
  *
  * @module whaletv-workbench
  */
-import { execFile } from 'node:child_process'
-import { createHash } from 'node:crypto'
 import {
-  cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync,
-  statSync, writeFileSync,
+  existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync,
 } from 'node:fs'
-import type { Stats } from 'node:fs'
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import os from 'node:os'
-import { basename, dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
-import { promisify } from 'node:util'
+import { basename, join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 // Type-only: ctx.clientModules (WebBootGraph client registry) context merge.
 import type {} from '@deepseek-ai/dsh-client-modules'
@@ -54,26 +47,20 @@ import type {} from '@deepseek-ai/dsh-client-modules'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 // Type-only: ctx.agents context merge.
 import type {} from '@deepseek-ai/dsh-agent'
-// ctx.skills context merge + value imports for the workbench-owned provider.
-import type {
-  SkillCandidate, SkillDefinition, SkillLookupOptions, SkillProviderControl,
-} from '@deepseek-ai/dsh-skill'
-import { parse as parseYaml } from 'yaml'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import z from '@deepseek-ai/schemastery'
 import type {
-  WorkbenchConfig, WorkbenchGroup, WorkbenchInstalledSkill, WorkbenchItem,
+  WorkbenchConfig, WorkbenchGroup, WorkbenchItem,
   WorkbenchSessionFollowupRequest, WorkbenchSessionFollowupResult, WorkbenchSkillImportRequest,
   WorkbenchSkillImportResult, WorkbenchSkillInstallRequest, WorkbenchSkillInstallResult,
-  WorkbenchSkillList, WorkbenchSkillRemoveRequest, WorkbenchSkillRemoveResult,
-  WorkbenchSkillSummary, WorkbenchSkillUpdateRequest, WorkbenchSkillUpdateResult,
-  WorkbenchState, WorkbenchUpdateCheckResult, WorkbenchUpdateHistory, WorkbenchUpdateHistoryEntry,
-  WorkbenchUpdateResult, WorkbenchUpdateRollbackResult, WorkbenchUpdateSkipRequest,
-  WorkbenchUpdateSkipResult,
+  WorkbenchSkillRemoveRequest, WorkbenchSkillRemoveResult,
+  WorkbenchSkillUpdateRequest, WorkbenchSkillUpdateResult,
+  WorkbenchState, WorkbenchUpdateHistory,
+  WorkbenchUpdateSkipRequest, WorkbenchUpdateSkipResult,
 } from './shared.ts'
 
-import { PACKAGE_DIR, WORKBENCH_STATE_DIR, run, git, truncate, readJsonBody, cleanString, readVersion, sendJson } from './host-plumbing.ts'
+import { PACKAGE_DIR, WORKBENCH_STATE_DIR, git, truncate, readJsonBody, cleanString, readVersion, sendJson } from './host-plumbing.ts'
 import { runUpdate, runUpdateCheck, runUpdateRollback, clearSkippedHead, readSkippedHead, readUpdateHistory, writeSkippedHead } from './update.ts'
 import { sweepStagingDir, registerWorkbenchSkillProvider, buildSkillList, buildSkillDebug, readInstalledRecords, upsertInstalledRecords, pruneInstalledRecords, installSkillOnDisk, importSkillFromGit, removeSkillOnDisk } from './skills.ts'
 import { readUsage, recordUsage, runHealthCheck, serveFavicon } from './extras.ts'
@@ -88,29 +75,13 @@ export const name = 'whaletv-workbench'
  * documents under $DSH_HOME/whaletv-workbench — NOT in this Config.
  *
  * dsh ≥ 0.1.7 projects this schema straight into the Plugins settings page
- * (`SettingsForms.describe`), so the two scalar prefs are declared
- * `.volatile()` — that is what makes them live-editable in the generated
- * form without remounting the plugin.
- */
-
-/**
- * User-owned preferences layered on top of any composition entry and schema
- * defaults. Kept small on purpose: the entry registry (groups/items) is a
- * separate JSON document editable in-panel, and the plugin's bookkeeping
- * (installed skills, skipped update heads) lives in its own Host-owned JSON
- * documents under $DSH_HOME/whaletv-workbench — NOT in this Config.
- *
- * dsh ≥ 0.1.7 projects this schema straight into the Plugins settings page
- * (`SettingsForms.describe`), so the two scalar prefs are declared
- * `.volatile()` — that is what makes them live-editable in the generated
- * form without remounting the plugin.
+ * (`SettingsForms.describe`), so the one scalar pref is declared
+ * `.volatile()` — that is what makes it live-editable in the generated
+ * form without remounting the plugin. (0.8.3 removed the never-consumed
+ * `gitRemote` / `customSkillDirs` fields — nothing read them.)
  */
 export interface Config {
-  /** Optional git remote URL used by the self-update route; empty relies on `git remote get-url origin`. */
-  gitRemote: string
-  /** Extra roots the workbench-installed skill directory sits alongside; consumed by future skill provider work. */
-  customSkillDirs: string[]
-  /** GitHub `owner/repo` the tarball-install update channel resolves against (raw package.json + installBundle spec). */
+  /** GitHub `owner/repo` the tarball-install update channel resolves against (raw package.json probe + `pnpm add github:<repo>`). */
   updateRepo: string
   /** @deprecated 0.7.1 — bookkeeping moved to installed-skills.json; kept so stored user layers still validate. */
   installedSkills: string[]
@@ -119,8 +90,6 @@ export interface Config {
 }
 
 export const Config = z.object({
-  gitRemote: z.string().default('').volatile(),
-  customSkillDirs: z.array(z.string()).default([]).volatile(),
   updateRepo: z.string().default('KK-Irving/whaletv-workbench').volatile(),
   /* Bookkeeping below stays NON-volatile on purpose: nothing may edit it
    * through the settings surface — the write routes own these fields. */
@@ -136,18 +105,7 @@ export const Config = z.object({
  * profile entry id (`whaletv-workbench`, see cordis.patch.yml) — referenced
  * by the generated page, not by this code.
  */
-
-/**
- * Host services this plugin uses through ctx. `settings` (dsh SettingsForms
- * on ≥ 0.1.7) is used once in apply() to turn off the auto-generated config
- * page; the plugin's own bookkeeping lives in its JSON state documents
- * instead of the settings document. The settings namespace is this plugin's
- * profile entry id (`whaletv-workbench`, see cordis.patch.yml) — referenced
- * by the generated page, not by this code.
- */
 export const inject = ['webServer', 'clientModules', 'skills', 'agents', 'settings']
-
-/** Plugin id — matches the package name and the client bundle graph row. */
 
 /**
  * All workbench routes live under this prefix. One `kind: 'prefix'`
@@ -155,8 +113,6 @@ export const inject = ['webServer', 'clientModules', 'skills', 'agents', 'settin
  * registrations to a single disposer.
  */
 const ROUTE_PREFIX = '/whaletv/workbench'
-
-/** Output captured per update step, truncated so JSON responses stay small. */
 
 /** Upper bounds for the payload the two JSON write routes accept. */
 const MAX_CONFIG_BYTES = 512 * 1024
@@ -167,22 +123,13 @@ const MAX_GROUPS = 50
 
 const MAX_ITEMS_PER_GROUP = 200
 
-/** Skill name must match dsh-skill's kebab-case identifier rule. */
-
 const WORKBENCH_CONFIG_PATH = join(WORKBENCH_STATE_DIR, 'workbench.json')
-/** Staging root for shallow git clones during skill import; entries are removed after copy. */
 
 /** Legacy config location — read once for backward-compat, then migrated. */
 const LEGACY_CONFIG_PATH = join(PACKAGE_DIR, 'config', 'workbench.json')
-/** Rolling self-update history (roadmap P1-9): the last N update attempts. */
 
 /** SHA accepted by the skip route: short (≥7) or full hex. */
 const SHA_PATTERN = /^[0-9a-f]{7,40}$/i
-
-/**
- * Launch-usage ledger (roadmap P2-12): `{ [itemId]: { count, lastUsed } }`,
- * feeding the panel's 最近使用 rail. Capped by lastUsed recency.
- */
 
 /**
  * Read the entry config: `$DSH_HOME/whaletv-workbench/workbench.json` when
@@ -286,8 +233,6 @@ function sanitizeConfig(raw: unknown): WorkbenchConfig {
 }
 
 /** Persist the workbench.json atomically (tmp file + rename). */
-
-/** Persist the workbench.json atomically (tmp file + rename). */
 function writeConfig(config: WorkbenchConfig): void {
   mkdirSync(WORKBENCH_STATE_DIR, { recursive: true })
   const tmp = `${WORKBENCH_CONFIG_PATH}.${process.pid}.${Date.now()}.tmp`
@@ -324,8 +269,6 @@ async function buildState(): Promise<WorkbenchState> {
   }
 }
 
-/** Send one JSON response with a UTF-8 content type. */
-
 /**
  * Volatile Config fields (dsh ≥ 0.1.7 live-editable settings) resolve to
  * accessor objects with a `.get()` method rather than plain values — unwrap
@@ -340,20 +283,6 @@ function readConfigValue(config: Config, field: 'updateRepo'): string {
     : raw
   return typeof value === 'string' && value.trim() !== '' ? value.trim() : 'KK-Irving/whaletv-workbench'
 }
-
-/**
- * Fetch the update repo's default-branch package.json version (tarball update
- * channel). Three sources are tried in order — mainland-China networks
- * routinely block raw.githubusercontent.com while reaching api.github.com
- * or the jsDelivr CDN, so the chain degrades instead of failing the check.
- * Every attempt is recorded so a total failure can explain itself.
- *
- * Ref discipline: this repo's default branch is `main` (the dsh harness
- * repo's is `master` — the first probe hardcoded /master/ and 404'd on all
- * three sources). raw uses /HEAD/, the GitHub API omits ref, and jsDelivr
- * pins @main explicitly because a version-less jsDelivr spec resolves the
- * latest git TAG instead of the branch.
- */
 
 /**
  * Route a follow-up prompt into an existing live agent's inbox.
@@ -391,29 +320,11 @@ function submitFollowup(
  * Extract the sub-path a request landed on within the workbench route
  * prefix. Strips the shared prefix and any query string.
  */
-
-/**
- * Extract the sub-path a request landed on within the workbench route
- * prefix. Strips the shared prefix and any query string.
- */
 function subPath(req: IncomingMessage): string {
   const raw = req.url ?? ''
   const noQuery = raw.split('?', 1)[0] ?? ''
   return noQuery.startsWith(ROUTE_PREFIX) ? noQuery.slice(ROUTE_PREFIX.length) : ''
 }
-
-/**
- * Register the workbench routes and the settings namespace.
- *
- * One `kind: 'prefix'` seat covers every sub-path under
- * `/whaletv/workbench/*` and dispatches internally; a closure-scoped
- * `updating` flag prevents concurrent update runs and never leaks across
- * plugin hot-reloads. The settings namespace joins the plugin's Host state
- * to the browser card by name.
- *
- * @param ctx - host context populated with the injected services.
- * @param config - schemastery-resolved config (composition entry + user layer + defaults).
- */
 
 /**
  * Register the workbench routes and the settings namespace.
@@ -435,7 +346,7 @@ export function apply(ctx: Context, config: Config): void {
   sweepStagingDir()
 
   // dsh ≥ 0.1.7 projects the plugin's Config schema into the Plugins
-  // settings page automatically. The two scalar prefs are declared volatile,
+  // settings page automatically. The one scalar pref is declared volatile,
   // so the generated form edits them live; suppress the AUTO page because
   // this plugin ships none of the host-plane pages it would duplicate.
   //

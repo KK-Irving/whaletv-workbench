@@ -14,16 +14,17 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { DragEvent, MouseEvent } from 'react'
 import { Button, Input } from '@deepseek-ai/dsh-client-ui-primitives'
 import clsx from 'clsx'
-import type { WorkbenchInjected, WorkbenchPanelProps } from './contract.ts'
+import type { WorkbenchPanelProps } from './contract.ts'
 import type {
-  WorkbenchConfig, WorkbenchGroup, WorkbenchHealthEntry, WorkbenchItem, WorkbenchSkillList,
-  WorkbenchSkillSummary, WorkbenchUpdateCheckResult, WorkbenchUsageRecord,
+  WorkbenchConfig, WorkbenchGroup, WorkbenchHealthEntry, WorkbenchItem,
+  WorkbenchUpdateCheckResult, WorkbenchUsageRecord,
 } from '../shared.ts'
 import { WORKBENCH_ICON } from './icon.ts'
 import css from './WorkbenchPanel.module.css'
 import { SkillsSection } from './SkillsSection.tsx'
 
-/** The one action label each entry kind drives. */function actionLabel(item: WorkbenchItem): string {
+/** The one action label each entry kind drives. */
+function actionLabel(item: WorkbenchItem): string {
   if (item.url !== undefined && item.url !== '') return '打开网页'
   if (item.path !== undefined && item.path !== '') return '打开'
   if (item.prompt !== undefined && item.prompt !== '') return '在会话中使用'
@@ -351,7 +352,7 @@ function UpdateCheckBanner(props: {
         </div>
         {result.upToDate !== true && (
           <p className={css.checkMeta}>
-            点「更新」通过 dsh 插件管理器安装新版本；完成后<b>重启 dsh</b> 生效。
+            点「更新」在线安装新版本（pnpm add github 仓库最新提交）；完成后<b>重启 dsh</b> 生效。
           </p>
         )}
         <div className={css.checkActions}>
@@ -417,7 +418,6 @@ export function WorkbenchPanel({
   loadSkills,
   installSkill,
   importSkill,
-  removeSkill,
   updateSkill,
   followup,
   referenceSkill,
@@ -479,7 +479,7 @@ export function WorkbenchPanel({
 
   /**
    * Re-read the skills catalog through the Host's `/skills` route. Errors
-   * live inside the returned WorkbenchSkillList (never thrown), so the
+   * live inside the returned skill catalog (never thrown), so the
    * panel decides whether to badge them without a separate try/catch.
    * The full payload is logged to the browser console so users hitting
    * "why is the section empty?" can diagnose without opening a devtool
@@ -792,16 +792,6 @@ export function WorkbenchPanel({
       window.alert('请先打开或新建一个会话，再从工作台引用技能。')
     }
   }
-  /** Uninstall a workbench-managed skill by name; disk + settings registry entry. */
-  const handleSkillRemove = async (skillName: string): Promise<void> => {
-    if (!window.confirm(`删除技能「${skillName}」？（仅移除工作台安装到 $DSH_HOME/skills 的文件）`)) return
-    try {
-      await removeSkill(skillName)
-      await reloadSkills()
-    } catch (error) {
-      actions.setLoadError(error instanceof Error ? error.message : String(error))
-    }
-  }
 
   /** Refresh the 最近使用 ledger (roadmap P2-12). */
   const reloadUsage = async (): Promise<void> => {
@@ -1110,7 +1100,6 @@ export function WorkbenchPanel({
             importSkill={importSkill}
             updateSkill={updateSkill}
             onUse={(name) => { handleSkillUse(name) }}
-            onRemove={(name) => { void handleSkillRemove(name) }}
             onReload={() => { void reloadSkills() }}
           />
         </div>
@@ -1139,5 +1128,3 @@ export function WorkbenchPanel({
     </div>
   )
 }
-
-/** Two mutually-exclusive skill install modes offered in the form. */

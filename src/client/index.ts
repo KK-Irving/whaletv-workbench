@@ -6,9 +6,9 @@
  * - WorkbenchPanel fills `shell.overlay` with the dashboard (groups /
  *   skills / update flow).
  *
- * The plugin's scalar preferences (gitRemote / customSkillDirs) are edited
- * through the dsh ≥ 0.1.7 auto-generated config page projected from the
- * Host Config schema — no custom settings card anymore (0.7.1).
+ * The plugin's scalar preference (updateRepo) is edited through the dsh
+ * ≥ 0.1.7 auto-generated config page projected from the Host Config schema —
+ * no custom settings card anymore (0.7.1).
  *
  * Slot declarations from the shipped shell are awaited via
  * `ctx.slots.inject`, so apply order against ui-sidebar / ui-layout is free.
@@ -37,6 +37,7 @@ import type {
   WorkbenchSkillUpdateResult, WorkbenchState,
   WorkbenchUpdateCheckResult, WorkbenchUpdateHistory, WorkbenchUpdateResult,
   WorkbenchUpdateRollbackResult, WorkbenchUpdateSkipResult, WorkbenchUsage,
+  WorkbenchUsageRecordResult,
 } from '../shared.ts'
 import { createWorkbenchStore } from './store.ts'
 import { SidebarEntry } from './SidebarEntry.tsx'
@@ -147,7 +148,7 @@ export function apply(ctx: ClientContext): void {
       // Fire-and-forget telemetry: a failed ledger write must never break the
       // launch the user asked for.
       try {
-        return await fetchJson<{ ok: boolean }>('/whaletv/workbench/usage/record', {
+        return await fetchJson<WorkbenchUsageRecordResult>('/whaletv/workbench/usage/record', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ itemId }),

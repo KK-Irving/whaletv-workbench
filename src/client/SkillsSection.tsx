@@ -5,7 +5,6 @@
  */
 import { useState } from 'react'
 import { Button, Input } from '@deepseek-ai/dsh-client-ui-primitives'
-import clsx from 'clsx'
 import type { WorkbenchSkillList, WorkbenchSkillSummary } from '../shared.ts'
 import type { WorkbenchInjected } from './contract.ts'
 import css from './WorkbenchPanel.module.css'
@@ -133,10 +132,9 @@ export function SkillsSection(props: {
   importSkill: WorkbenchInjected['importSkill']
   updateSkill: WorkbenchInjected['updateSkill']
   onUse: (name: string) => void
-  onRemove: (name: string) => void
   onReload: () => void
 }) {
-  const { skills, skillsLoading, query, installSkill, importSkill, updateSkill, onUse, onRemove, onReload } = props
+  const { skills, skillsLoading, query, installSkill, importSkill, updateSkill, onUse, onReload } = props
   const [showForm, setShowForm] = useState(false)
   const [mode, setMode] = useState<SkillFormMode>('inline')
   const [inlineDraft, setInlineDraft] = useState<SkillInlineDraft>(emptyInlineDraft)

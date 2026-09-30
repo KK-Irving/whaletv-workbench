@@ -83,9 +83,9 @@ export interface WorkbenchUpdateResult {
    */
   needRestart?: boolean
   /**
-   * Tarball-install mode: the update went through the dsh plugin-manager
-   * (`installBundle`) instead of git, and `needRestart` is always true (the
-   * manager marks an existing dependency restart-required).
+   * Tarball-install mode: the update went through a direct `pnpm add
+   * github:<repo>` in the profile directory (v0.8.1) instead of git, and
+   * `needRestart` is always true (the profile's dependency moved).
    */
   tarball?: true
   error?: string
@@ -120,8 +120,9 @@ export interface WorkbenchUpdateCheckResult {
   skipped?: boolean
   /**
    * Tarball-install mode (no .git): the check compares the installed
-   * package.json version against the update repo's master package.json
-   * instead of git refs, and 更新 goes through the dsh plugin-manager.
+   * package.json version against the update repo's default-branch
+   * package.json instead of git refs, and 更新 runs `pnpm add github:<repo>`
+   * in the profile directory.
    */
   tarball?: true
   /** Installed package version (tarball mode). */
