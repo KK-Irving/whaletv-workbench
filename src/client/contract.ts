@@ -10,8 +10,9 @@ import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 // Type-only: pull the layout's SlotMap merge (shell.overlay).
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 import type {
-  WorkbenchConfig, WorkbenchConfigSaveResult, WorkbenchHealth, WorkbenchRestartPlan,
-  WorkbenchRestartResult, WorkbenchSessionFollowupResult,
+  WorkbenchConfig, WorkbenchConfigSaveResult, WorkbenchHealth, WorkbenchMarketDetail,
+  WorkbenchMarketInstallRequest, WorkbenchMarketInstallResult, WorkbenchMarketSearch,
+  WorkbenchRestartPlan, WorkbenchRestartResult, WorkbenchSessionFollowupResult,
   WorkbenchSkillImportRequest, WorkbenchSkillImportResult, WorkbenchSkillInstallRequest,
   WorkbenchSkillInstallResult, WorkbenchSkillList, WorkbenchSkillRemoveResult,
   WorkbenchSkillUpdateResult, WorkbenchState,
@@ -69,6 +70,12 @@ export type WorkbenchInjected = {
   removeSkill: (name: string) => Promise<WorkbenchSkillRemoveResult>
   /** Re-clone a skill's recorded origin and apply a newer head (P3-21). */
   updateSkill: (name: string) => Promise<WorkbenchSkillUpdateResult>
+  /** Search the aggregated skill market (SkillHub + ClawHub, Host-proxied). */
+  marketSearch: (keyword: string, source?: string) => Promise<WorkbenchMarketSearch>
+  /** Fetch one market skill's metadata + SKILL.md body (Host-proxied). */
+  marketDetail: (source: string, slug: string, ownerHandle?: string) => Promise<WorkbenchMarketDetail>
+  /** Install a market skill: download + safe-extract into $DSH_HOME/skills. */
+  marketInstall: (request: WorkbenchMarketInstallRequest) => Promise<WorkbenchMarketInstallResult>
   /**
    * Queue an ordinary follow-up turn on a live agent (agent.followup).
    * Preferred over clipboard-copy + startSession when the caller knows the

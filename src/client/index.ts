@@ -31,8 +31,9 @@ import { writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives'
 import type {} from '@deepseek-ai/dsh-client-ui-workspace/client'
 import type { WorkbenchInjected } from './contract.ts'
 import type {
-  WorkbenchConfigSaveResult, WorkbenchHealth, WorkbenchRestartPlan, WorkbenchRestartResult,
-  WorkbenchSessionFollowupResult,
+  WorkbenchConfigSaveResult, WorkbenchHealth, WorkbenchMarketDetail,
+  WorkbenchMarketInstallRequest, WorkbenchMarketInstallResult, WorkbenchMarketSearch,
+  WorkbenchRestartPlan, WorkbenchRestartResult, WorkbenchSessionFollowupResult,
   WorkbenchSkillImportRequest, WorkbenchSkillImportResult, WorkbenchSkillInstallRequest,
   WorkbenchSkillInstallResult, WorkbenchSkillList, WorkbenchSkillRemoveResult,
   WorkbenchSkillUpdateResult, WorkbenchState,
@@ -186,6 +187,22 @@ export function apply(ctx: ClientContext): void {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name }),
+      }),
+    marketSearch: (keyword: string, source?: string) => {
+      const params = new URLSearchParams({ q: keyword })
+      if (source !== undefined && source !== '' && source !== 'all') params.set('source', source)
+      return fetchJson<WorkbenchMarketSearch>(`/whaletv/workbench/skills/market/search?${params.toString()}`)
+    },
+    marketDetail: (source: string, slug: string, ownerHandle?: string) => {
+      const params = new URLSearchParams({ source, slug })
+      if (ownerHandle !== undefined && ownerHandle !== '') params.set('owner', ownerHandle)
+      return fetchJson<WorkbenchMarketDetail>(`/whaletv/workbench/skills/market/detail?${params.toString()}`)
+    },
+    marketInstall: (request: WorkbenchMarketInstallRequest) =>
+      fetchJson<WorkbenchMarketInstallResult>('/whaletv/workbench/skills/market/install', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(request),
       }),
     followup: (prompt, sessionId) =>
       fetchJson<WorkbenchSessionFollowupResult>('/whaletv/workbench/session/followup', {

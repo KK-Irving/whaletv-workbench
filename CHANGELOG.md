@@ -2,6 +2,26 @@
 
 Notable changes per version. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) loosely; pre-1.0 minor bumps carry feature-level changes because the API surface is still shaping up.
 
+## 0.8.17 — 2026-09-30
+
+### Added
+
+- **技能市场（P3-22 落地，聚合双源）**：技能区新增「已装 / 市场」切换。市场面板聚合
+  **SkillHub**（`api.skillhub.tencent.com`，腾讯云国内镜像，17 万+ 技能，支持中文）
+  与 **ClawHub**（`clawhub.ai`）两个社区：关键词搜索（按下载量排序、同 slug 去重、
+  已装置顶）、来源徽标 + 认证标 + 下载/收藏热度、点「详情」看 **SKILL.md 正文**
+  （SkillHub file API 渲染为面板内 Markdown），「安装」下载 ZIP 并经**自研安全解包**
+  （中央目录驱动、store+deflate、条目数/解压总量/单文件三重上限、逐条目 zip-slip
+  防护）落到 `$DSH_HOME/skills/<kebab-slug>`，写入市场来源的版本记录（为后续
+  「市场技能检查更新」留痕），并触发 provider 立即失效。
+- 外部请求全部由 **Host 代理**（浏览器页面无法跨过两个社区缺失的 CORS 头）；
+  任一数据源失败被隔离上报，另一源照常应答。
+- 新路由：`GET /skills/market/search`、`GET /skills/market/detail`、
+  `POST /skills/market/install`（`src/skill-market.ts`，纯函数
+  `mergeMarketResults` / `sanitizeSkillDirName` 导出供冒烟断言）。
+- SkillsSection 打开时不再渲染市场搜索的状态（切到「市场」才挂载），避免后台
+  请求。
+
 ## 0.8.16 — 2026-09-30
 
 ### Changed

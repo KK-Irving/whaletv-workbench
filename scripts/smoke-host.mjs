@@ -303,7 +303,33 @@ try {
     throw new Error(`resolveProfileDir returned ${String(resolved)}, want ${profileDir}`)
   }
 
-  console.log('smoke-host: OK — prefix dispatch (state/config/update*/restart/usage/health/icon/session), sanitize + persist, 405/404 + git-import/skip/icon/restart boundaries, pnpm build-approval plumbing')
+  // 17. Market aggregation (v0.8.17): dedupe by slug, installed entries first,
+  //     then by downloads. `sanitizeSkillDirName` must produce provider-visible
+  //     kebab-case directory names from arbitrary market slugs.
+  const merged = mod.mergeMarketResults(
+    [
+      { source: 'skillhub', items: [
+        { source: 'skillhub', slug: 'demo-skill', name: 'demo-skill', displayName: 'Demo', summary: 'a', summaryZh: '', author: 'x', downloads: 100, installs: 0, stars: 0, iconUrl: '', verified: false, version: '', installRef: 'demo-skill', ownerHandle: '' },
+        { source: 'skillhub', slug: 'shared', name: 'shared', displayName: 'Shared (hub)', summary: '', summaryZh: '', author: 'x', downloads: 50, installs: 0, stars: 0, iconUrl: '', verified: false, version: '', installRef: 'shared', ownerHandle: '' },
+      ] },
+      { source: 'clawhub', items: [
+        { source: 'clawhub', slug: 'shared', name: 'shared', displayName: 'Shared (claw)', summary: '', summaryZh: '', author: 'y', downloads: 90, installs: 0, stars: 0, iconUrl: '', verified: false, version: '', installRef: 'y/shared', ownerHandle: 'y' },
+        { source: 'clawhub', slug: 'claw-only', name: 'claw-only', displayName: 'Claw only', summary: '', summaryZh: '', author: 'y', downloads: 200, installs: 0, stars: 0, iconUrl: '', verified: false, version: '', installRef: 'y/claw-only', ownerHandle: 'y' },
+      ] },
+    ],
+    ['claw-only'],
+  )
+  if (merged.length !== 3) throw new Error(`mergeMarketResults dedupe failed: ${merged.length} items`)
+  if (merged[0].slug !== 'claw-only') throw new Error(`installed-first sort failed: ${JSON.stringify(merged.map(m => m.slug))}`)
+  if (merged.find(m => m.slug === 'shared')?.displayName !== 'Shared (hub)') {
+    throw new Error('mergeMarketResults must keep the first-seen source for a duplicated slug')
+  }
+  for (const [input, want] of [['My_Skill!', 'my-skill'], ['gitcrawl', 'gitcrawl'], ['---', 'market-skill']]) {
+    const got = mod.sanitizeSkillDirName(input)
+    if (got !== want) throw new Error(`sanitizeSkillDirName(${input}) = ${got}, want ${want}`)
+  }
+
+  console.log('smoke-host: OK — prefix dispatch (state/config/update*/restart/usage/health/icon/session), sanitize + persist, 405/404 + git-import/skip/icon/restart boundaries, pnpm build-approval plumbing, market aggregation')
 } catch (error) {
   console.error('smoke-host: FAILED:', error)
   process.exitCode = 1

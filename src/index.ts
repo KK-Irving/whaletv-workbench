@@ -27,6 +27,9 @@
  *                              $DSH_HOME/skills/<name>/
  *   POST /skills/remove      → remove a workbench-owned skill's dir
  *   POST /skills/update      → re-clone the recorded origin and apply changes
+ *   GET  /skills/market/search  → aggregate SkillHub + ClawHub search
+ *   GET  /skills/market/detail  → one market skill's metadata + SKILL.md body
+ *   POST /skills/market/install → download + safe-extract a market skill ZIP
  *   POST /session/followup   → ctx.agents.get(sessionId).followup(message)
  *                              — the modern replacement for
  *                              clipboard-copy + startSession pairing.
@@ -70,6 +73,9 @@ import { buildRestartPlan, requestRestart } from './restart.ts'
 // enough to test against fixtures (a real refusal message + a temp profile).
 export { approvalKeysFor, grantBuildApproval, isBuildApprovalRefusal, resolveProfileDir } from './pnpm-approval.ts'
 import { sweepStagingDir, registerWorkbenchSkillProvider, buildSkillList, buildSkillDebug, readInstalledRecords, upsertInstalledRecords, pruneInstalledRecords, installSkillOnDisk, importSkillFromGit, removeSkillOnDisk } from './skills.ts'
+import { installMarketSkill, marketDetail, readInstalledNamesForMarket, searchMarket } from './skill-market.ts'// Re-exported for the smoke suite: pure market aggregation/sanitization logic
+// tested against fixtures (no network in the gate).
+export { mergeMarketResults, sanitizeSkillDirName } from './skill-market.ts'
 import { readUsage, recordUsage, runHealthCheck, serveFavicon } from './extras.ts'
 
 export const name = 'whaletv-workbench'
@@ -813,6 +819,87 @@ export function apply(ctx: Context, config: Config): void {
                   ok: false, error: error instanceof Error ? error.message : String(error),
                 }
                 sendJson(res, 400, result)
+              }
+            },
+            (error: unknown) => {
+              sendJson(res, 400, { ok: false, error: error instanceof Error ? error.message : String(error) })
+            },
+          )
+          return
+        }
+
+        // GET /skills/market/search — aggregate SkillHub + ClawHub search (③).
+        // External calls run here (Host side) because the browser page cannot
+        // cross the registries' missing CORS headers.
+        if (sub === '/skills/market/search' && (method === undefined || method === 'GET' || method === 'HEAD')) {
+          const url = new URL(req.url ?? '/', 'http://localhost')
+          void searchMarket(url.searchParams.get('q') ?? '', {
+            source: url.searchParams.get('source') ?? undefined,
+            page: Number.parseInt(url.searchParams.get('page') ?? '1', 10) || 1,
+            installedNames: readInstalledNamesForMarket(),
+          }).then(
+            result => { sendJson(res, 200, result) },
+            (error: unknown) => { sendJson(res, 500, { ok: false, items: [], sources: [], errors: [String(error)] }) },
+          )
+          return
+        }
+
+        // GET /skills/market/detail — one market skill's metadata + body.
+        if (sub === '/skills/market/detail' && (method === undefined || method === 'GET' || method === 'HEAD')) {
+          const url = new URL(req.url ?? '/', 'http://localhost')
+          const slug = url.searchParams.get('slug') ?? ''
+          if (slug === '') {
+            sendJson(res, 400, { ok: false, error: 'slug 不能为空' })
+            return
+          }
+          void marketDetail(
+            url.searchParams.get('source') ?? 'skillhub',
+            slug,
+            url.searchParams.get('owner') ?? undefined,
+          ).then(
+            detail => { sendJson(res, 200, { ...detail }) },
+            (error: unknown) => { sendJson(res, 502, { ok: false, error: error instanceof Error ? error.message : String(error) }) },
+          )
+          return
+        }
+
+        // POST /skills/market/install — download + safe-extract a market skill
+        // into $DSH_HOME/skills/<sanitized-slug>, then record provenance.
+        if (sub === '/skills/market/install') {
+          if (method !== 'POST') {
+            sendJson(res, 405, { ok: false, error: '仅支持 POST 请求' })
+            return
+          }
+          void readJsonBody(req, 8 * 1024).then(
+            async (raw) => {
+              try {
+                const request = raw as { source?: string; slug?: string; ownerHandle?: string }
+                const slug = typeof request.slug === 'string' ? request.slug.trim() : ''
+                if (slug === '') throw new Error('slug 不能为空')
+                if (!/^[a-z0-9][a-z0-9._-]*$/i.test(slug)) throw new Error(`slug 含非法字符：${slug}`)
+                const outcome = await installMarketSkill({
+                  source: request.source,
+                  slug,
+                  ...(typeof request.ownerHandle === 'string' && request.ownerHandle !== '' ? { ownerHandle: request.ownerHandle } : {}),
+                })
+                if (!outcome.ok) throw new Error(outcome.error)
+                // Record provenance so a future market "check updates" can
+                // re-download from the same entry (mirror the git-import flow).
+                // `name` is the on-disk directory identity, matching what the
+                // catalog builder lists.
+                upsertInstalledRecords([{
+                  name: outcome.dirName,
+                  installedAt: new Date().toISOString(),
+                  market: {
+                    source: outcome.source === 'clawhub' ? 'clawhub' : 'skillhub',
+                    slug,
+                    ...(request.ownerHandle !== undefined && request.ownerHandle !== '' ? { ownerHandle: request.ownerHandle } : {}),
+                  },
+                }])
+                skillProvider.invalidate()
+                sendJson(res, 200, { ok: true, name: outcome.name, dir: outcome.dir })
+              } catch (error) {
+                sendJson(res, 400, { ok: false, error: error instanceof Error ? error.message : String(error) })
               }
             },
             (error: unknown) => {

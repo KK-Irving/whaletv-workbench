@@ -7,6 +7,7 @@ import { useState } from 'react'
 import { Button, Input } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { WorkbenchSkillList, WorkbenchSkillSummary } from '../shared.ts'
 import type { WorkbenchInjected } from './contract.ts'
+import { SkillsMarket } from './panel/SkillsMarket.tsx'
 import css from './WorkbenchPanel.module.css'
 
 type SkillFormMode = 'inline' | 'git'
@@ -131,10 +132,15 @@ export function SkillsSection(props: {
   installSkill: WorkbenchInjected['installSkill']
   importSkill: WorkbenchInjected['importSkill']
   updateSkill: WorkbenchInjected['updateSkill']
+  marketSearch: WorkbenchInjected['marketSearch']
+  marketDetail: WorkbenchInjected['marketDetail']
+  marketInstall: WorkbenchInjected['marketInstall']
   onUse: (name: string) => void
   onReload: () => void
 }) {
-  const { skills, skillsLoading, query, installSkill, importSkill, updateSkill, onUse, onReload } = props
+  const { skills, skillsLoading, query, installSkill, importSkill, updateSkill, marketSearch, marketDetail, marketInstall, onUse, onReload } = props
+  /** Which pane is active: the installed catalog or the aggregated market. */
+  const [view, setView] = useState<'installed' | 'market'>('installed')
   const [showForm, setShowForm] = useState(false)
   const [mode, setMode] = useState<SkillFormMode>('inline')
   const [inlineDraft, setInlineDraft] = useState<SkillInlineDraft>(emptyInlineDraft)
@@ -247,22 +253,55 @@ export function SkillsSection(props: {
       <div className={css.skillsHead}>
         <h2 className={css.groupTitle}>工作台技能</h2>
         <span className={css.skillsTools}>
+          {/* View toggle: installed management vs the aggregated market.
+              The market pane is only rendered while active so a search does
+              not keep polling state in the background. */}
+          <span className={css.skillsTabs} role="tablist">
+            <Button
+              size="sm"
+              variant={view === 'installed' ? 'primary' : 'outline'}
+              onClick={() => { setView('installed') }}
+              role="tab"
+              aria-selected={view === 'installed'}
+            >
+              已装
+            </Button>
+            <Button
+              size="sm"
+              variant={view === 'market' ? 'primary' : 'outline'}
+              onClick={() => { setView('market'); setError(null); setShowForm(false) }}
+              role="tab"
+              aria-selected={view === 'market'}
+            >
+              市场
+            </Button>
+          </span>
           {skillsLoading && <span className={css.skillsMeta}>加载中…</span>}
           {skills?.complete === false && !skillsLoading && (
             <span className={css.skillsMeta} title="部分技能提供者未完成发现">部分</span>
           )}
-          <Button
-            size="sm"
-            variant={showForm ? 'primary' : 'outline'}
-            onClick={() => { setShowForm(v => !v); setError(null) }}
-            disabled={busy}
-          >
-            {showForm ? '取消' : '+ 新建技能'}
-          </Button>
+          {view === 'installed' && (
+            <Button
+              size="sm"
+              variant={showForm ? 'primary' : 'outline'}
+              onClick={() => { setShowForm(v => !v); setError(null) }}
+              disabled={busy}
+            >
+              {showForm ? '取消' : '+ 新建技能'}
+            </Button>
+          )}
         </span>
       </div>
 
-      {showForm && (
+      {view === 'market' && (
+        <SkillsMarket
+          marketSearch={marketSearch}
+          marketDetail={marketDetail}
+          marketInstall={marketInstall}
+          onInstalled={onReload}
+        />
+      )}
+      {view === 'installed' && showForm && (
         <div className={css.skillsForm}>
           <div className={css.skillsTabs} role="tablist">
             <Button
@@ -422,11 +461,11 @@ export function SkillsSection(props: {
 
       {skills?.ok === true && filtered.length === 0 && !skillsLoading && notice === null && (
         <p className={css.hint}>
-          {query === '' ? '当前没有可用的技能。点击「+ 新建技能」写入一份，或从 Git 仓库导入。' : '没有匹配的技能。'}
+          {query === '' ? '当前没有可用的技能。点击「+ 新建技能」写入一份，从 Git 仓库导入，或切到「市场」搜索安装。' : '没有匹配的技能。'}
         </p>
       )}
 
-      <div className={css.grid}>
+      {view === 'installed' && <div className={css.grid}>
         {filtered.map((skill: WorkbenchSkillSummary) => (
           <div key={`${skill.provider}:${skill.name}`} className={css.item}>
             <div className={css.itemHead}>
@@ -460,7 +499,7 @@ export function SkillsSection(props: {
             </div>
           </div>
         ))}
-      </div>
+      </div>}
     </section>
   )
 }

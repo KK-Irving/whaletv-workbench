@@ -738,6 +738,112 @@
   white-space: nowrap;
 }
 
+/* Skill market (v0.8.17): search row, result list, detail modal body. */
+.marketPane {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.marketSearchRow {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.marketSearchRow > :first-child {
+  flex: 1;
+  min-width: 0;
+}
+
+.marketList {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.marketItem {
+  padding: 10px 12px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 10px;
+  background: var(--dsw-alias-bg-base);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.marketItemHead {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.marketName {
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.marketSource {
+  flex: none;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--dsw-alias-markdown-inline-code);
+  font-size: 10px;
+  line-height: 14px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.marketVerified {
+  flex: none;
+  color: var(--dsw-alias-state-success-label, var(--dsw-alias-label-tertiary));
+  font-size: 11px;
+}
+
+.marketSummary {
+  margin: 0;
+  font-size: 12px;
+  line-height: 17px;
+  color: var(--dsw-alias-label-tertiary);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.marketMeta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.marketMeta .spacer {
+  flex: 1;
+}
+
+.marketDetail {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--dsw-alias-label-primary);
+  overflow-wrap: anywhere;
+}
+
 /* Host/client version skew: the running server predates the panel. */
 .skewBadge {
   flex: none;

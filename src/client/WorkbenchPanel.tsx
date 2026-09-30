@@ -59,6 +59,9 @@ export function WorkbenchPanel({
   installSkill,
   importSkill,
   updateSkill,
+  marketSearch,
+  marketDetail,
+  marketInstall,
   followup,
   referenceSkill,
 }: WorkbenchPanelProps) {
@@ -538,6 +541,9 @@ export function WorkbenchPanel({
             installSkill={installSkill}
             importSkill={importSkill}
             updateSkill={updateSkill}
+            marketSearch={marketSearch}
+            marketDetail={marketDetail}
+            marketInstall={marketInstall}
             onUse={(name) => { handleSkillUse(name) }}
             onReload={() => { void reloadSkills() }}
           />

@@ -235,6 +235,12 @@ export interface WorkbenchInstalledSkill {
   subPath?: string
   /** Ref (branch/tag) recorded at import time, when given. */
   ref?: string
+  /**
+   * Market provenance (v0.8.17): set when the skill came from the in-panel
+   * market (SkillHub / ClawHub ZIP install) instead of a git import. Enables
+   * a future "check for update" that re-downloads from the same entry.
+   */
+  market?: { source: 'skillhub' | 'clawhub'; slug: string; ownerHandle?: string }
   /** ISO-8601 install timestamp. */
   installedAt: string
 }
@@ -409,6 +415,73 @@ export interface WorkbenchRestartPlan {
 /** POST /whaletv/workbench/restart response. */
 export interface WorkbenchRestartResult {
   ok: boolean
+  error?: string
+}
+
+/** One aggregated market entry (SkillHub / ClawHub), normalized across sources. */
+export interface WorkbenchMarketItem {
+  source: 'skillhub' | 'clawhub'
+  slug: string
+  name: string
+  displayName: string
+  summary: string
+  summaryZh: string
+  author: string
+  downloads: number
+  installs: number
+  stars: number
+  iconUrl: string
+  verified: boolean
+  version: string
+  /** ClawHub's `owner/slug` install reference; equals the slug for SkillHub. */
+  installRef: string
+  ownerHandle: string
+  /** True when a skill with this name already exists in $DSH_HOME/skills. */
+  installed?: boolean
+}
+
+/** GET /whaletv/workbench/skills/market/search response. */
+export interface WorkbenchMarketSearch {
+  ok: boolean
+  items: WorkbenchMarketItem[]
+  /** Sources that actually answered. */
+  sources: string[]
+  /** Per-source failures (the other source still answers). */
+  errors: string[]
+}
+
+/** GET /whaletv/workbench/skills/market/detail response. */
+export interface WorkbenchMarketDetail {
+  ok: boolean
+  source: 'skillhub' | 'clawhub'
+  slug: string
+  name: string
+  displayName?: string
+  summary: string
+  author: string
+  downloads: number
+  installs: number
+  stars: number
+  verified: boolean
+  version: string
+  /** SKILL.md body (SkillHub file API); empty when unavailable. */
+  readme: string
+}
+
+/** POST /whaletv/workbench/skills/market/install payload. */
+export interface WorkbenchMarketInstallRequest {
+  source: 'skillhub' | 'clawhub'
+  slug: string
+  ownerHandle?: string
+}
+
+/** POST /whaletv/workbench/skills/market/install response. */
+export interface WorkbenchMarketInstallResult {
+  ok: boolean
+  /** Directory name the skill was installed under (sanitized kebab-case). */
+  name?: string
+  /** Absolute install directory. */
+  dir?: string
   error?: string
 }
 

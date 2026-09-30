@@ -56,7 +56,7 @@ function translateGitError(url: string, message: string): string {
 }
 
 /** dsh-skill-filesystem user-dsh root (rank 400). Written by the install route. */
-const USER_DSH_SKILLS_DIR = join(DSH_HOME, 'skills')
+export const USER_DSH_SKILLS_DIR = join(DSH_HOME, 'skills')
 
 /** Staging root for shallow git clones during skill import; entries are removed after copy. */
 const IMPORT_STAGING_DIR = join(WORKBENCH_STATE_DIR, '.staging')
@@ -449,7 +449,7 @@ function sweepStagingDir(): void {
  * the filter recognize the git dir path prefix — everything is otherwise
  * relative to `srcDir`.
  */
-function installBundleDir(srcDir: string, dest: string, staging: string): void {
+export function installBundleDir(srcDir: string, dest: string, staging: string): void {
   if (existsSync(dest)) rmSync(dest, { recursive: true, force: true, maxRetries: 8, retryDelay: 250 })
   cpSync(srcDir, dest, {
     recursive: true,
@@ -681,4 +681,5 @@ export {
   sweepStagingDir, registerWorkbenchSkillProvider, buildSkillList, buildSkillDebug,
   readInstalledRecords, upsertInstalledRecords, pruneInstalledRecords,
   installSkillOnDisk, importSkillFromGit, removeSkillOnDisk,
+  parseFrontmatter,
 }
