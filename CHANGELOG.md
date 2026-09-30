@@ -2,6 +2,18 @@
 
 Notable changes per version. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) loosely; pre-1.0 minor bumps carry feature-level changes because the API surface is still shaping up.
 
+## 0.8.2 — 2026-09-30
+
+Cleanup release: dead dependency removal and documentation refresh.
+
+### Changed
+
+- **Removed `pluginManager` from inject** — the direct pnpm approach
+  (v0.8.1) replaced the last `ctx.pluginManager` usage; the declared
+  dependency was dead weight.
+- **README 目录结构** updated to reflect the v0.8.x module layout
+  (host-plumbing / update / skills / extras / SkillsSection / ADR dir).
+
 ## 0.8.1 — 2026-09-30
 
 Update-flow validation release: exists purely so the desktop app can test

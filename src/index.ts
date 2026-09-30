@@ -145,7 +145,7 @@ export const Config = z.object({
  * profile entry id (`whaletv-workbench`, see cordis.patch.yml) — referenced
  * by the generated page, not by this code.
  */
-export const inject = ['webServer', 'clientModules', 'skills', 'agents', 'settings', 'pluginManager']
+export const inject = ['webServer', 'clientModules', 'skills', 'agents', 'settings']
 
 /** Plugin id — matches the package name and the client bundle graph row. */
 

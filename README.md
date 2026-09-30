@@ -116,22 +116,38 @@ node scripts/install-profile.mjs web
 ├── package.json            # dsh.bundle.patch + dsh.client 声明 + 构建脚本
 ├── cordis.patch.yml        # Bundle patch layer（`dsh plugin add` 自动挂载）
 ├── tsdown.config.ts        # 双面构建（Host lib + 浏览器 closure-factory bundle）
+├── lib/                    # 构建产物（随仓库分发，零构建安装）
 ├── config/workbench.example.json  # 条目模板（面板保存后生成本地 workbench.json）
 ├── LICENSE                 # MIT
 ├── CHANGELOG.md            # 版本日志（每次发版一条条目）
 ├── assets/workbench.svg    # 工作台图标（矢量，构建时内嵌）
-├── docs/DESIGN.md          # 设计与 UI 规划（初版形态 + 路线图）
+├── docs/
+│   ├── DESIGN.md           # 设计与 UI 规划
+│   ├── ROADMAP.md          # 路线图与执行状态
+│   └── adr/                # 架构决策记录
 ├── scripts/
 │   ├── gen-icon.mjs         # 图标 SVG → data URL 模块
-│   ├── link-harness-deps.mjs   # 镜像 $DSH_HOME/profiles/node_modules 回退
+│   ├── link-harness-deps.mjs   # 镜像 harness 依赖 junction（跨版本容错）
+│   ├── check-version.mjs   # 版本三处一致性校验
 │   ├── install-profile.mjs     # 一键安装到 dsh web profile
-│   ├── smoke-client.mjs        # client bundle 冒烟测试（脚本级，无需浏览器）
-│   ├── smoke-apply.mjs         # apply() 注册契约测试（slot 名称/id/共享 store）
-│   └── smoke-host.mjs          # Host 配置路由测试（保存/校验/读回，自动备份还原用户配置）
+│   ├── smoke-client.mjs        # client bundle 冒烟测试
+│   ├── smoke-apply.mjs         # apply() 注册契约测试
+│   └── smoke-host.mjs          # Host 路由 + 安全边界测试
 └── src/
-    ├── index.ts            # Host 半：state / config / update 路由
-    ├── shared.ts           # 双面共享的 wire 类型
-    └── client/             # Browser 半：入口 + 面板 + store
+    ├── index.ts            # Host 入口：Config + apply + 路由分发
+    ├── host-plumbing.ts    # 共享管道（exec/git/JSON/路径）
+    ├── update.ts           # 更新域（git + tarball 双通道 + 历史 + 回滚）
+    ├── skills.ts           # 技能域（provider + 导入 + 版本记录）
+    ├── extras.ts           # 附加域（最近使用 + 可达性 + favicon）
+    ├── shared.ts           # 双面共享 wire 类型
+    └── client/
+        ├── index.ts        # Browser 入口（slot 注册 + inject 面）
+        ├── WorkbenchPanel.tsx  # 面板主体（头部/条目/搜索/更新）
+        ├── SkillsSection.tsx   # 技能专区（安装/导入/检查更新）
+        ├── SidebarEntry.tsx    # 侧边栏入口
+        ├── store.ts        # 共享 store（面板开关/搜索/更新状态）
+        ├── contract.ts     # inject 面类型
+        └── icon.ts         # 图标 data URL
 ```
 
 ## 已知边界（初版）
@@ -164,7 +180,7 @@ node scripts/install-profile.mjs web
 
 ## 版本
 
-当前版本 **v0.8.1**（对齐 dsh 0.2.0-rc.2）。每次发版的变更详见 [CHANGELOG.md](./CHANGELOG.md)。面板顶部会显示实际运行的版本号（读自 `package.json`），跟这里对齐即可（`pnpm run check:version` 会在冒烟链里校验三处一致）。
+当前版本 **v0.8.2**（对齐 dsh 0.2.0-rc.2）。每次发版的变更详见 [CHANGELOG.md](./CHANGELOG.md)。面板顶部会显示实际运行的版本号（读自 `package.json`），跟这里对齐即可（`pnpm run check:version` 会在冒烟链里校验三处一致）。
 
 ## License
 
