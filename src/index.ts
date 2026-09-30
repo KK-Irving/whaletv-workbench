@@ -614,31 +614,37 @@ function pluginManagerLike(ctx: Context): TarballPluginManager | undefined {
 }
 
 /**
- * Fetch the update repo's master package.json version (tarball update
+ * Fetch the update repo's default-branch package.json version (tarball update
  * channel). Three sources are tried in order — mainland-China networks
  * routinely block raw.githubusercontent.com while reaching api.github.com
  * or the jsDelivr CDN, so the chain degrades instead of failing the check.
  * Every attempt is recorded so a total failure can explain itself.
+ *
+ * Ref discipline: this repo's default branch is `main` (the dsh harness
+ * repo's is `master` — the first probe hardcoded /master/ and 404'd on all
+ * three sources). raw uses /HEAD/, the GitHub API omits ref, and jsDelivr
+ * pins @main explicitly because a version-less jsDelivr spec resolves the
+ * latest git TAG instead of the branch.
  */
 async function fetchLatestTarballVersion(repo: string): Promise<{ version?: string; attempts: string[] }> {
   const attempts: string[] = []
   const sources: Array<{ name: string; url: string; parse: (body: string) => string | undefined }> = [
     {
-      // Raw CDN first: live commit HEAD, no cache lag.
+      // Raw CDN first: HEAD = default branch, live commit HEAD, no cache lag.
       name: 'raw',
-      url: `https://raw.githubusercontent.com/${repo}/master/package.json`,
+      url: `https://raw.githubusercontent.com/${repo}/HEAD/package.json`,
       parse: body => parseVersionField(body),
     },
     {
-      // jsDelivr CDN: plain JSON, CN-friendly edge cache (may lag master by up to 12h).
+      // jsDelivr CDN: plain JSON, CN-friendly edge cache (may lag main by up to 12h).
       name: 'jsdelivr',
-      url: `https://cdn.jsdelivr.net/gh/${repo}@master/package.json`,
+      url: `https://cdn.jsdelivr.net/gh/${repo}@main/package.json`,
       parse: body => parseVersionField(body),
     },
     {
       // GitHub API: contents endpoint returns the file base64-encoded.
       name: 'api',
-      url: `https://api.github.com/repos/${repo}/contents/package.json?ref=master`,
+      url: `https://api.github.com/repos/${repo}/contents/package.json`,
       parse: body => {
         try {
           const envelope = JSON.parse(body) as { content?: string; encoding?: string }
