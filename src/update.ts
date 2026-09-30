@@ -142,8 +142,11 @@ interface TarballPluginManager {
     changed: boolean
     application: 'applied' | 'restart-required' | 'overridden' | 'failed' | 'cancelled'
     warnings?: string[]
-    packageResult?: { output?: string }
-    error?: { diagnostic?: string }
+    packageResult?: { output?: string; kind?: string }
+    error?: { code?: string; diagnostic?: string }
+    failedAt?: string
+    target?: string
+    stage?: string
   }>
 }
 
@@ -292,7 +295,16 @@ async function runTarballUpdate(ctx: Context, repo: string): Promise<WorkbenchUp
   try {
     const change = await manager.installBundle(spec, { approvedBuilds: ['whaletv-workbench'] })
     if (change.application === 'failed' || change.error !== undefined) {
-      const detail = truncate(change.error?.diagnostic ?? change.packageResult?.output ?? `application: ${change.application}`)
+      // Capture every diagnostic field the manager exposes — the caller
+      // should never see a bare "failed" without knowing why.
+      const parts = [
+        change.error?.diagnostic,
+        change.error?.code,
+        change.failedAt ? `失败阶段: ${change.failedAt}` : undefined,
+        change.packageResult?.output,
+        change.packageResult?.kind ? `类型: ${change.packageResult.kind}` : undefined,
+      ].filter((s): s is string => typeof s === 'string' && s !== '')
+      const detail = truncate(parts.length > 0 ? parts.join('\n') : JSON.stringify(change, null, 2))
       return { ok: false, tarball: true, error: `插件管理器安装失败：${detail}` }
     }
     const application = change.application === 'restart-required'
