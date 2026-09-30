@@ -25,7 +25,7 @@
  * Usage: node scripts/smoke-host.mjs   (requires a built lib/index.js)
  */
 import { EventEmitter } from 'node:events'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import os from 'node:os'
 import { dirname, join } from 'node:path'
@@ -240,7 +240,59 @@ try {
     throw new Error(`/update/progress idle shape: ${progress.status} ${JSON.stringify(progress.body)}`)
   }
 
-  console.log('smoke-host: OK — prefix dispatch (state/config/update*/restart/usage/health/icon/session), sanitize + persist, 405/404 + git-import/skip/icon/restart boundaries')
+  // 14. pnpm build-approval plumbing (v0.8.10). The fixtures are the two
+  //     refusal shapes pnpm actually prints — a git-hosted dependency update
+  //     on a host whose pnpm enforces the build allowlist must be granted the
+  //     exact key pnpm demanded, or every release fails identically.
+  const tarballRefusal = '[ERR_PNPM_IGNORED_BUILDS] Ignored build scripts: '
+    + 'whaletv-workbench@https://codeload.github.com/KK-Irving/whaletv-workbench/tar.gz/7d0d742cd1ac5b75601b1965c7e8eac77fe5efc9, '
+    + 'whaletv-workbench@https://codeload.github.com/KK-Irving/whaletv-workbench/tar.gz/ba29c4ed79128794fcf9cc379a09b8f52ea25dee\n'
+    + 'Run "pnpm approve-builds" to pick which dependencies should be allowed to run scripts.'
+  const tarballKeys = mod.approvalKeysFor(tarballRefusal)
+  if (tarballKeys.length !== 2 || !tarballKeys[0].includes('tar.gz/') || mod.isBuildApprovalRefusal(tarballRefusal) !== true) {
+    throw new Error(`approvalKeysFor(tarball) failed: ${JSON.stringify(tarballKeys)}`)
+  }
+  const gitRefusal = '[ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED] Failed to prepare git-hosted package fetched from '
+    + '"https://github.com/KK-Irving/whaletv-workbench.git": The git-hosted package "whaletv-workbench@0.8.9" needs to '
+    + 'execute build scripts but is not in the "allowBuilds" allowlist.\n\nAdd the package to "allowBuilds" in your '
+    + 'project\'s pnpm-workspace.yaml to allow it to run scripts. For example:\nallowBuilds:\n  '
+    + 'whaletv-workbench@git+https://github.com/KK-Irving/whaletv-workbench.git#e8055057724095c052d7c9a1e6d9efc2c92dfe6a: true'
+  const gitKeys = mod.approvalKeysFor(gitRefusal)
+  if (gitKeys.length !== 1 || !gitKeys[0].includes('#e805505')) {
+    throw new Error(`approvalKeysFor(git) failed: ${JSON.stringify(gitKeys)}`)
+  }
+  if (mod.isBuildApprovalRefusal('ERR_PNPM_FETCH_404 GET https://example.com: Not Found') !== false) {
+    throw new Error('isBuildApprovalRefusal must not treat a network error as an approval refusal')
+  }
+
+  // 15. grantBuildApproval merges both spellings, keeps every existing line,
+  //     and is idempotent on a second run for the same keys.
+  const profileDir = join(TMP_DSH_HOME, 'profiles', 'web')
+  mkdirSync(profileDir, { recursive: true })
+  const workspaceFile = join(profileDir, 'pnpm-workspace.yaml')
+  writeFileSync(workspaceFile, '# profile header\npackages:\n  - .\n\nnodeLinker: hoisted\n')
+  const firstGrant = mod.grantBuildApproval(profileDir, gitKeys)
+  if (!firstGrant.ok || !firstGrant.changed) {
+    throw new Error(`grantBuildApproval failed: ${JSON.stringify(firstGrant)}`)
+  }
+  const granted = readFileSync(workspaceFile, 'utf8')
+  for (const needle of ['# profile header', 'nodeLinker: hoisted', 'onlyBuiltDependencies:', `  - whaletv-workbench`, 'allowBuilds:', gitKeys[0]]) {
+    if (!granted.includes(needle)) throw new Error(`granted pnpm-workspace.yaml lost ${needle}:\n${granted}`)
+  }
+  const secondGrant = mod.grantBuildApproval(profileDir, gitKeys)
+  if (!secondGrant.ok || secondGrant.changed) {
+    throw new Error(`grantBuildApproval must be idempotent: ${JSON.stringify(secondGrant)}`)
+  }
+
+  // 16. resolveProfileDir finds the profile that declares this dependency
+  //     (the link:/junction case the old `packageDir/../..` derivation missed).
+  writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', private: true, dependencies: { 'whaletv-workbench': 'link:E://somewhere' } }))
+  const resolved = mod.resolveProfileDir(join(TMP_DSH_HOME, 'nowhere', 'whaletv-workbench'), TMP_DSH_HOME)
+  if (resolved !== profileDir) {
+    throw new Error(`resolveProfileDir returned ${String(resolved)}, want ${profileDir}`)
+  }
+
+  console.log('smoke-host: OK — prefix dispatch (state/config/update*/restart/usage/health/icon/session), sanitize + persist, 405/404 + git-import/skip/icon/restart boundaries, pnpm build-approval plumbing')
 } catch (error) {
   console.error('smoke-host: FAILED:', error)
   process.exitCode = 1

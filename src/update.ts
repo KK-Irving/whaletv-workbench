@@ -12,8 +12,9 @@ import type {
   WorkbenchUpdateResult, WorkbenchUpdateRollbackResult,
 } from './shared.ts'
 import {
-  CLIENT_ID, PACKAGE_DIR, WORKBENCH_STATE_DIR, run, git, truncate, readVersion,
+  CLIENT_ID, DSH_HOME, PACKAGE_DIR, WORKBENCH_STATE_DIR, run, git, truncate, readVersion,
 } from './host-plumbing.ts'
+import { approvalKeysFor, grantBuildApproval, isBuildApprovalRefusal, resolveProfileDir } from './pnpm-approval.ts'
 
 /** Rolling self-update history (roadmap P1-9): the last N update attempts. */
 const UPDATE_HISTORY_PATH = join(WORKBENCH_STATE_DIR, 'updates.json')
@@ -252,27 +253,71 @@ function isSemverGt(latest: string, installed: string): boolean {
 }
 
 /**
- * Tarball update (v0.7.4 → redesigned in v0.8.0): run `pnpm add github:<repo>`
- * directly in the profile directory. This bypasses the dsh plugin-manager's
- * `installBundle` — which mis-reports a same-version re-add as
- * `ambiguous-install` — and just does what we need: re-resolve the latest
- * commit, update the lockfile, and hot-inject the client bundle.
+ * Tarball update (v0.7.4 → redesigned in v0.8.0, hardened in v0.8.10): run
+ * `pnpm add github:<repo>` directly in the profile directory. This bypasses
+ * the dsh plugin-manager's `installBundle` — which mis-reports a same-version
+ * re-add as `ambiguous-install` — and just does what we need: re-resolve the
+ * latest commit, update the lockfile, and hot-inject the client bundle.
+ *
+ * Two pnpm behaviours have to be handled for this to work on a host whose
+ * pnpm enforces the build allowlist (DSH Desktop bundles one):
+ *   - a git-hosted dependency is treated as needing a build, so the profile
+ *     must approve it — with a key pinned to the fetched commit, which means
+ *     every release needs a fresh approval;
+ *   - `--ignore-scripts` is correct for us anyway: this package ships a
+ *     prebuilt `lib/` and needs no lifecycle script at all.
+ * The refusal message names the key pnpm wants, so the update grants exactly
+ * that key and retries once instead of sending the user to `pnpm approve-builds`.
  */
 async function runTarballUpdate(ctx: Context, repo: string): Promise<WorkbenchUpdateResult> {
-  // Derive the profile directory from our own package path:
-  // PACKAGE_DIR = <profile>/node_modules/whaletv-workbench
-  const profileDir = join(PACKAGE_DIR, '..', '..')
   const spec = `github:${repo}`
+  const profileDir = resolveProfileDir(PACKAGE_DIR, DSH_HOME)
+  if (profileDir === undefined) {
+    return {
+      ok: false, tarball: true,
+      error: '找不到安装本插件的 dsh profile 目录（$DSH_HOME/profiles 下没有声明该依赖的 profile）。请用 dsh 的插件管理器更新，或手动执行 pnpm add。',
+    }
+  }
+  // --ignore-scripts: this package's lib/ is prebuilt and committed, so no
+  // lifecycle script is needed; --config.strict-dep-builds=false keeps an
+  // ignored build from failing the whole install on stricter hosts.
+  const args = ['add', '--ignore-scripts', '--config.strict-dep-builds=false', spec]
   setStage('tarball', `正在通过 pnpm 安装 ${spec}（可能耗时数十秒）…`)
+  const notes: string[] = []
   try {
-    const output = await run('pnpm', ['add', spec], profileDir)
+    let output: string
+    try {
+      output = await run('pnpm', args, profileDir)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      const keys = approvalKeysFor(message)
+      if (!isBuildApprovalRefusal(message) || keys.length === 0) throw error
+      // pnpm refused because the profile has not approved this exact commit.
+      const granted = grantBuildApproval(profileDir, keys)
+      if (!granted.ok) {
+        throw new Error(`${message}\n\n自动授权写入失败：${granted.error ?? '未知错误'}；请在 ${profileDir} 手动执行 pnpm approve-builds`)
+      }
+      notes.push(`已在 ${join(profileDir, 'pnpm-workspace.yaml')} 授权构建键：${keys.join('、')}${granted.changed ? '' : '（已存在）'}`)
+      setStage('tarball', '已授权 pnpm 构建白名单，正在重试安装…')
+      output = await run('pnpm', args, profileDir)
+    }
     ctx.clientModules.rebuilt(CLIENT_ID)
     return {
       ok: true, tarball: true, needRestart: true, changed: true,
-      output: truncate(`$ pnpm add ${spec} (cwd: ${profileDir})\n${output}\n\n已通过 pnpm 安装新版本；重启 dsh 后生效。`),
+      output: truncate([
+        `$ pnpm ${args.join(' ')} (cwd: ${profileDir})`,
+        ...notes,
+        output,
+        '',
+        '已通过 pnpm 安装新版本；重启 dsh 后生效（面板顶栏「重启 dsh」可一键完成）。',
+      ].filter(part => part !== '').join('\n')),
     }
   } catch (error) {
-    return { ok: false, tarball: true, error: truncate(`pnpm add ${spec} 失败：${String(error instanceof Error ? error.message : error)}`) }
+    const message = String(error instanceof Error ? error.message : error)
+    const hint = isBuildApprovalRefusal(message)
+      ? `\n\n该 profile 的 pnpm 要求为 git 依赖授权构建脚本。可在 profile 目录（${profileDir}）执行 \`pnpm approve-builds\`，或手动运行：pnpm add --ignore-scripts ${spec}`
+      : ''
+    return { ok: false, tarball: true, error: truncate(`pnpm add ${spec} 失败：${message}${hint}`) }
   }
 }
 

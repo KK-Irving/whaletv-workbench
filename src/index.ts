@@ -66,6 +66,9 @@ import type {
 import { PACKAGE_DIR, WORKBENCH_STATE_DIR, git, truncate, readJsonBody, cleanString, readVersion, sendJson } from './host-plumbing.ts'
 import { runUpdate, runUpdateCheck, runUpdateRollback, clearSkippedHead, readSkippedHead, readUpdateHistory, readUpdateProgress, writeSkippedHead } from './update.ts'
 import { buildRestartPlan, requestRestart } from './restart.ts'
+// Re-exported for the smoke suite: the pnpm build-approval helpers are pure
+// enough to test against fixtures (a real refusal message + a temp profile).
+export { approvalKeysFor, grantBuildApproval, isBuildApprovalRefusal, resolveProfileDir } from './pnpm-approval.ts'
 import { sweepStagingDir, registerWorkbenchSkillProvider, buildSkillList, buildSkillDebug, readInstalledRecords, upsertInstalledRecords, pruneInstalledRecords, installSkillOnDisk, importSkillFromGit, removeSkillOnDisk } from './skills.ts'
 import { readUsage, recordUsage, runHealthCheck, serveFavicon } from './extras.ts'
 

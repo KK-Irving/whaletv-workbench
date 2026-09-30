@@ -2,6 +2,30 @@
 
 Notable changes per version. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) loosely; pre-1.0 minor bumps carry feature-level changes because the API surface is still shaping up.
 
+## 0.8.10 — 2026-09-30
+
+### Fixed
+
+- **tarball 更新被 pnpm 的构建白名单拦住，每次必失败。** 在启用
+  build-approval 的宿主上（DSH Desktop 自带的就是），`pnpm add
+  github:…` 会因为「git 托管依赖需要 prepare」而报
+  `[ERR_PNPM_IGNORED_BUILDS]` / `ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED`，
+  且要求的白名单键**绑定到本次抓取的 commit**——手动 `pnpm approve-builds`
+  批准过一次，下个版本又会被拦。修复分三层（`src/pnpm-approval.ts`）：
+  1. 更新命令加 `--ignore-scripts`（本包 `lib/` 是预构建提交的，根本不需要
+     生命周期脚本）并显式 `--config.strict-dep-builds=false`；
+  2. 若仍被拒，从 pnpm 打印的报错里**取出它要求的键**，合并写入 profile 的
+     `pnpm-workspace.yaml`（同时写 `onlyBuiltDependencies` 与 `allowBuilds`
+     两种拼法，保留原文件所有行，幂等），随后重试一次；
+  3. 仍失败时给出可复制的手动命令，而不是一句 "approve-builds"。
+- **profile 目录推导在 `link:`/junction 安装下会指向仓库的上级目录。** 原
+  `packageDir/../..` 只对 `node_modules/<pkg>` 平铺成立；现在改为优先用
+  可证明的来源：`node_modules` 的祖父目录，或 `$DSH_HOME/profiles/*` 中
+  声明了本依赖的 profile。找不到时直接报错，不再盲目对错误目录执行 pnpm。
+
+冒烟新增：两种真实拒绝报文的关键字提取、白名单合并（保留原内容 + 幂等）、
+以及 link: 场景下的 profile 定位。
+
 ## 0.8.9 — 2026-09-30
 
 Update-loop release (roadmap ③): restart from the panel, watch the update
