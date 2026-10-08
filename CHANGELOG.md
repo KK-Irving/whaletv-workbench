@@ -2,6 +2,27 @@
 
 Notable changes per version. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) loosely; pre-1.0 minor bumps carry feature-level changes because the API surface is still shaping up.
 
+## 0.8.19 — 2026-10-08
+
+### Removed
+
+- **移除「面板内重启 dsh」功能（含路由、UI、徽标、helper 与 ADR）。** 面板不再提供
+  任何主动重启 harness 的入口：
+  - 删除 Host 侧 `GET /restart/plan`、`POST /restart` 两条路由与 `src/restart.ts`
+    （分离助手重启机制、回环校验 `isLoopbackRequest` 一并移除）；`HOST_CAPABILITIES`
+    去掉 `restart`，只保留 `progress` / `history`。
+  - 删除客户端 `useRestart` hook、顶栏「重启 dsh」按钮、「服务端待重启」与桌面端
+    外部入口徽标、重启遮罩层，以及相关 CSS（`skewBadge` / `restartOverlay` /
+    `restartTitle` / `restartHint`）与 `HOST_SKEW_HINT` 文案。
+  - 删除 wire 类型 `WorkbenchRestartPlan` / `WorkbenchRestartResult` 及
+    `contract` 的 `restartPlan` / `restart` 两个方法。
+  - 删除 ADR `0003-restart-is-manual-on-desktop.md`；README 架构图 / 目录结构、
+    ROADMAP ADR 行同步去除对应条目。
+  - smoke-host 增加防回归断言：`/restart/plan` 与 `/restart` 均返回 404。
+- **保留** 更新结果里的 `needRestart` 文字提示：Host 代码变更后，面板与更新历史
+  仍会提示「需重启 dsh」，由用户用托盘菜单「重启 Web 服务」手动完成——移除的只是
+  插件代替用户执行重启这件事，不是「是否需要重启」的告知。
+
 ## 0.8.18 — 2026-10-08
 
 ### Fixed

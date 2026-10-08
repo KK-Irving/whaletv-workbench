@@ -12,7 +12,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 import type {
   WorkbenchConfig, WorkbenchConfigSaveResult, WorkbenchHealth, WorkbenchMarketDetail,
   WorkbenchMarketInstallRequest, WorkbenchMarketInstallResult, WorkbenchMarketSearch,
-  WorkbenchRestartPlan, WorkbenchRestartResult, WorkbenchSessionFollowupResult,
+  WorkbenchSessionFollowupResult,
   WorkbenchSkillImportRequest, WorkbenchSkillImportResult, WorkbenchSkillInstallRequest,
   WorkbenchSkillInstallResult, WorkbenchSkillList, WorkbenchSkillRemoveResult,
   WorkbenchSkillUpdateResult, WorkbenchState,
@@ -46,10 +46,6 @@ export type WorkbenchInjected = {
   loadUpdateHistory: () => Promise<WorkbenchUpdateHistory>
   /** Poll the running update pipeline's stage (③). */
   loadProgress: () => Promise<WorkbenchUpdateProgress>
-  /** Ask the Host how (and whether) it can restart itself (③). */
-  restartPlan: () => Promise<WorkbenchRestartPlan>
-  /** Relaunch the harness; the caller's page will disconnect while it comes back (③). */
-  restart: () => Promise<WorkbenchRestartResult>
   /** Mark the given upstream head as skipped; the checker stops nagging until the remote moves (P1-10). */
   skipUpdate: (sha: string) => Promise<WorkbenchUpdateSkipResult>
   /** Reset to the state before the last successful update and hot-inject (P1-9). */

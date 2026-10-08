@@ -7,8 +7,8 @@
  * This file is the shell: store reads, hook orchestration and the JSX. The
  * domains live in `panel/` — pure entry helpers, the extracted components
  * (ItemForm / ItemCard / RecentBar / UpdateCheckBanner / ConfirmDialog) and
- * the domain hooks (usePanelData / useUpdateFlow / useEntriesEditing /
- * useRestart). Everything arrives through the props shares (owner → runtime,
+ * the domain hooks (usePanelData / useUpdateFlow / useEntriesEditing).
+ * Everything arrives through the props shares (owner → runtime,
  * store → useStore/actions, inject → Host actions); no cordis imports, no
  * React context.
  */
@@ -28,11 +28,10 @@ import { ItemForm } from './panel/ItemForm.tsx'
 import { RecentBar } from './panel/RecentBar.tsx'
 import { UpdateCheckBanner } from './panel/UpdateCheckBanner.tsx'
 import { entryTarget, emptyDraft } from './panel/entry-helpers.ts'
-import { HOST_SKEW_HINT, takeReopenAfterRebuild } from './panel/notices.ts'
+import { takeReopenAfterRebuild } from './panel/notices.ts'
 import { usePanelData } from './panel/usePanelData.ts'
 import { useUpdateFlow } from './panel/useUpdateFlow.ts'
 import { useEntriesEditing } from './panel/useEntriesEditing.ts'
-import { useRestart } from './panel/useRestart.ts'
 
 /** The workbench dashboard (see module doc). */
 export function WorkbenchPanel({
@@ -48,8 +47,6 @@ export function WorkbenchPanel({
   checkUpdate,
   loadUpdateHistory,
   loadProgress,
-  restartPlan,
-  restart,
   skipUpdate,
   rollbackUpdate,
   loadUsage,
@@ -77,14 +74,6 @@ export function WorkbenchPanel({
   const checking = useStore(s => s.checking)
   const checkResult = useStore(s => s.checkResult)
   const updateHistory = useStore(s => s.updateHistory)
-  /**
-   * Whether the RUNNING Host half knows the restart route. `undefined` on
-   * hosts older than 0.8.11 (no capabilities field), where the only way to
-   * find out is to try — and to translate the miss into the same advice.
-   */
-  const hostSupportsRestart = state?.capabilities === undefined
-    ? undefined
-    : state.capabilities.includes('restart')
 
   /** Search keyboard-navigation cursor into the flat match list (P2-14). */
   const [activeIndex, setActiveIndex] = useState<number | null>(null)
@@ -128,11 +117,6 @@ export function WorkbenchPanel({
     handleDragStartItem, handleDragEnterItem, handleDropOnItem, handleDropOnGroup,
     handleGridDragOver, handleGridDragLeave, handleDragEndItem, moveItemBy,
   } = useEntriesEditing({ state, saveConfig, reload, askConfirm })
-
-  // Restart domain: per-open plan probe + the guarded restart flow.
-  const { restartInfo, restarting, runRestart } = useRestart({
-    actions, state, restartPlan, restart, loadState, askConfirm,
-  })
 
   // Hot-inject survival (v0.8.4): when this instance is the fresh bundle
   // mounted right after an in-panel update/rollback rebuilt the plugin, the
@@ -298,20 +282,6 @@ export function WorkbenchPanel({
             </span>
           )}
           <Button size="sm" onClick={() => { void reload(); void reloadSkills() }} disabled={updating || saving}>刷新</Button>
-          {/* Restart sits beside 刷新 on purpose: both are maintenance actions,
-              and at the far right it widened the action cluster enough to push
-              刷新/检查更新/编辑 toward the middle. */}
-          {restartInfo?.relaunchable === true && (
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => { void runRestart() }}
-              disabled={updating || saving || restarting}
-              title={restartInfo.note ?? '结束并重新拉起 dsh；面板会等待服务恢复后自动刷新'}
-            >
-              {restarting ? '重启中…' : '重启 dsh'}
-            </Button>
-          )}
           {/* Single update entry (review 2026-09-03): 检查更新 fetches and shows
               the result banner; the banner's 更新 button is the only path that
               applies. Both install kinds are supported: git checkouts compare
@@ -328,18 +298,6 @@ export function WorkbenchPanel({
           <Button size="sm" variant={editMode ? 'primary' : 'outline'} onClick={toggleEditMode} disabled={updating || saving}>
             {editMode ? '完成' : '编辑'}
           </Button>
-          {hostSupportsRestart === false && (
-            <span className={css.skewBadge} title={HOST_SKEW_HINT}>服务端待重启</span>
-          )}
-          {/* Only a host that can genuinely relaunch itself gets the button.
-              The desktop app cannot (its shell exposes no restart to plugin
-              processes), so there the badge names the real entry point
-              instead of offering a button that cannot work. */}
-          {restartInfo !== null && restartInfo.relaunchable === false && (
-            <span className={css.skewBadge} title={restartInfo.note}>
-              {restartInfo.externalAction ?? '需手动重启'}
-            </span>
-          )}
           <Button size="sm" onClick={closePanel} aria-label="关闭工作台">✕</Button>
         </header>
 
@@ -608,12 +566,6 @@ export function WorkbenchPanel({
           </footer>
         )}
       </section>
-      {restarting && (
-        <div className={css.restartOverlay} role="status" aria-live="polite">
-          <p className={css.restartTitle}>正在重启 dsh…</p>
-          <p className={css.restartHint}>服务恢复后面板会自动刷新；若长时间没有动静，请用托盘菜单重启 Web 服务。</p>
-        </div>
-      )}
       <ConfirmDialog request={confirmRequest} onClose={closeConfirm} />
     </div>
   )

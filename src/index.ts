@@ -13,8 +13,6 @@
  *   GET  /update/progress    → live stage of the running update pipeline
  *   POST /update/skip        → mark the upstream head as skipped
  *   POST /update/rollback    → reset to the last update's before-SHA + rebuild
- *   GET  /restart/plan       → can this host restart itself, and with what command
- *   POST /restart            → relaunch the harness (loopback-only), then exit
  *   GET  /usage              → launch-count ledger (最近使用 rail)
  *   POST /usage/record       → bump one item's launch counter
  *   GET  /health             → reachability probe for every entry
@@ -68,7 +66,7 @@ import type {
 
 import { PACKAGE_DIR, WORKBENCH_STATE_DIR, git, truncate, readJsonBody, cleanString, readVersion, sendJson } from './host-plumbing.ts'
 import { runUpdate, runUpdateCheck, runUpdateRollback, clearSkippedHead, readSkippedHead, readUpdateHistory, readUpdateProgress, writeSkippedHead } from './update.ts'
-import { buildRestartPlan, requestRestart } from './restart.ts'
+
 // Re-exported for the smoke suite: the pnpm build-approval helpers are pure
 // enough to test against fixtures (a real refusal message + a temp profile).
 export { approvalKeysFor, grantBuildApproval, isBuildApprovalRefusal, resolveProfileDir } from './pnpm-approval.ts'
@@ -286,10 +284,10 @@ async function buildState(): Promise<WorkbenchState> {
 /**
  * What THIS build of the Host half can serve. Kept in the loaded module (not
  * derived from disk or package.json) so a newer client can detect that the
- * running process predates a feature and tell the user to restart, instead of
+ * running process predates a feature and degrade gracefully, instead of
  * calling a route that answers "未知的工作台路由".
  */
-const HOST_CAPABILITIES: string[] = ['restart', 'progress', 'history']
+const HOST_CAPABILITIES: string[] = ['progress', 'history']
 
 /**
  * Volatile Config fields (dsh ≥ 0.1.7 live-editable settings) resolve to
@@ -346,20 +344,6 @@ function subPath(req: IncomingMessage): string {
   const raw = req.url ?? ''
   const noQuery = raw.split('?', 1)[0] ?? ''
   return noQuery.startsWith(ROUTE_PREFIX) ? noQuery.slice(ROUTE_PREFIX.length) : ''
-}
-
-/**
- * Whether a request came straight from the loopback interface.
- *
- * The restart route ends the harness process, so it accepts only a direct
- * local caller: a proxied/forwarded request (reverse proxy, LAN gateway) must
- * never be able to kill the host it is talking to.
- */
-function isLoopbackRequest(req: IncomingMessage): boolean {
-  const headers = req.headers ?? {}
-  if (headers['x-forwarded-for'] !== undefined || headers['x-real-ip'] !== undefined) return false
-  const address = req.socket?.remoteAddress ?? ''
-  return address === '127.0.0.1' || address === '::1' || address === '::ffff:127.0.0.1'
 }
 
 /**
@@ -537,33 +521,6 @@ export function apply(ctx: Context, config: Config): void {
         // GET /update/progress — the running pipeline's current stage (③).
         if (sub === '/update/progress' && (method === undefined || method === 'GET' || method === 'HEAD')) {
           sendJson(res, 200, readUpdateProgress())
-          return
-        }
-
-        // GET /restart/plan — how this host restarts, and whether the panel
-        // may do it itself (③). Read-only; safe to call on every panel open.
-        if (sub === '/restart/plan' && (method === undefined || method === 'GET' || method === 'HEAD')) {
-          sendJson(res, 200, buildRestartPlan())
-          return
-        }
-
-        // POST /restart — relaunch the harness. Loopback-only and never
-        // proxied: this ends the current process, so a forwarded request must
-        // not be able to trigger it.
-        if (sub === '/restart') {
-          if (method !== 'POST') {
-            sendJson(res, 405, { ok: false, error: '仅支持 POST 请求' })
-            return
-          }
-          if (!isLoopbackRequest(req)) {
-            sendJson(res, 403, { ok: false, error: '只接受本机回环地址的重启请求' })
-            return
-          }
-          const plan = buildRestartPlan()
-          const started = requestRestart(plan)
-          // The response must reach the browser BEFORE the process exits; the
-          // exit itself is scheduled by requestRestart.
-          sendJson(res, started.ok ? 200 : 400, { ok: started.ok, ...(started.error !== undefined ? { error: started.error } : {}) })
           return
         }
 

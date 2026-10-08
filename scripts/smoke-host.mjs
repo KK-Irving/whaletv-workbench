@@ -10,8 +10,8 @@
  *   - GET  /skills             → 200 with the mocked catalog
  *   - GET  /nonsense           → 404 (sub-path fallthrough)
  *   - git-import / skip / icon safety boundaries → 400 with readable errors
- *   - GET /restart/plan shape, POST /restart refusing a non-loopback caller
- *     (the refusal must land before the helper spawns or the exit is scheduled)
+ *   - GET /restart/plan and POST /restart both 404 (the in-panel restart
+ *     feature was removed)
  *   - GET /update/progress answering while idle
  *
  * Uses a temp $DSH_HOME so the smoke run never touches the user's real
@@ -150,8 +150,8 @@ try {
   // The client half detects a stale Host by these flags (the client bundle
   // hot-injects, the Host half only loads at process start), so the contract
   // must not silently lose them.
-  if (!Array.isArray(state0.body.capabilities) || !state0.body.capabilities.includes('restart')) {
-    throw new Error(`state.capabilities must advertise the restart route: ${JSON.stringify(state0.body.capabilities)}`)
+  if (!Array.isArray(state0.body.capabilities) || !state0.body.capabilities.includes('progress')) {
+    throw new Error(`state.capabilities must advertise its routes: ${JSON.stringify(state0.body.capabilities)}`)
   }
 
   // 2. Valid config save → 200, url trimmed.
@@ -225,33 +225,22 @@ try {
     throw new Error(`/icon private origin should 400: ${icon.status} ${JSON.stringify(icon.body)}`)
   }
 
-  // 11. Restart plan is readable and self-describing (roadmap ③).
-  const plan = await request('GET', '/restart/plan')
-  if (plan.status !== 200 || typeof plan.body.relaunchable !== 'boolean' || typeof plan.body.command !== 'string' || plan.body.command === '') {
-    throw new Error(`/restart/plan shape: ${plan.status} ${JSON.stringify(plan.body)}`)
-  }
-  // The suite runs under plain Node, so the desktop strategy must never be
-  // claimed here — the Electron-only path may not leak into other hosts.
-  if (!['helper', 'manual'].includes(plan.body.strategy)) {
-    throw new Error(`/restart/plan strategy under Node: ${JSON.stringify(plan.body.strategy)}`)
+  // 11. The restart routes are gone: both answer the sub-path fallthrough 404
+  //     (the in-panel restart feature was removed; updates ask the user to
+  //     restart dsh manually instead).
+  const restartPlanGone = await request('GET', '/restart/plan')
+  const restartGone = await request('POST', '/restart')
+  if (restartPlanGone.status !== 404 || restartGone.status !== 404) {
+    throw new Error(`/restart* must 404 after removal: plan=${restartPlanGone.status} restart=${restartGone.status}`)
   }
 
-  // 12. The restart route refuses a request that is not a direct loopback
-  //     caller. The mock has no socket at all, so this asserts the guard —
-  //     and, critically, that the refusal happens BEFORE any helper spawn or
-  //     pending process exit (this smoke process must survive).
-  const refused = await request('POST', '/restart')
-  if (refused.status !== 403) {
-    throw new Error(`/restart from a non-loopback caller should 403: ${refused.status} ${JSON.stringify(refused.body)}`)
-  }
-
-  // 13. Update progress answers even when nothing is running.
+  // 12. Update progress answers even when nothing is running.
   const progress = await request('GET', '/update/progress')
   if (progress.status !== 200 || typeof progress.body.stage !== 'string' || progress.body.running !== false) {
     throw new Error(`/update/progress idle shape: ${progress.status} ${JSON.stringify(progress.body)}`)
   }
 
-  // 14. pnpm build-approval plumbing (v0.8.10). The fixtures are the two
+  // 13. pnpm build-approval plumbing (v0.8.10). The fixtures are the two
   //     refusal shapes pnpm actually prints — a git-hosted dependency update
   //     on a host whose pnpm enforces the build allowlist must be granted the
   //     exact key pnpm demanded, or every release fails identically.
@@ -276,7 +265,7 @@ try {
     throw new Error('isBuildApprovalRefusal must not treat a network error as an approval refusal')
   }
 
-  // 15. grantBuildApproval merges both spellings, keeps every existing line,
+  // 14. grantBuildApproval merges both spellings, keeps every existing line,
   //     and is idempotent on a second run for the same keys.
   const profileDir = join(TMP_DSH_HOME, 'profiles', 'web')
   mkdirSync(profileDir, { recursive: true })
@@ -295,7 +284,7 @@ try {
     throw new Error(`grantBuildApproval must be idempotent: ${JSON.stringify(secondGrant)}`)
   }
 
-  // 16. resolveProfileDir finds the profile that declares this dependency
+  // 15. resolveProfileDir finds the profile that declares this dependency
   //     (the link:/junction case the old `packageDir/../..` derivation missed).
   writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', private: true, dependencies: { 'whaletv-workbench': 'link:E://somewhere' } }))
   const resolved = mod.resolveProfileDir(join(TMP_DSH_HOME, 'nowhere', 'whaletv-workbench'), TMP_DSH_HOME)
@@ -303,7 +292,7 @@ try {
     throw new Error(`resolveProfileDir returned ${String(resolved)}, want ${profileDir}`)
   }
 
-  // 17. Market aggregation (v0.8.17): dedupe by slug, installed entries first,
+  // 16. Market aggregation (v0.8.17): dedupe by slug, installed entries first,
   //     then by downloads. `sanitizeSkillDirName` must produce provider-visible
   //     kebab-case directory names from arbitrary market slugs.
   const merged = mod.mergeMarketResults(
@@ -329,7 +318,7 @@ try {
     if (got !== want) throw new Error(`sanitizeSkillDirName(${input}) = ${got}, want ${want}`)
   }
 
-  console.log('smoke-host: OK — prefix dispatch (state/config/update*/restart/usage/health/icon/session), sanitize + persist, 405/404 + git-import/skip/icon/restart boundaries, pnpm build-approval plumbing, market aggregation')
+  console.log('smoke-host: OK — prefix dispatch (state/config/update*/usage/health/icon/session), sanitize + persist, 405/404 + git-import/skip/icon boundaries + restart routes removed, pnpm build-approval plumbing, market aggregation')
 } catch (error) {
   console.error('smoke-host: FAILED:', error)
   process.exitCode = 1

@@ -22,16 +22,6 @@ const REOPEN_FLAG_TTL_MS = 90_000
 export const NOTICE_AUTO_DISMISS_MS = 10_000
 
 /**
- * Shown when the running Host half predates what the panel is offering.
- *
- * The client bundle hot-injects after an update; the Host half only loads when
- * the dsh process starts. So right after updating, the panel can be newer than
- * the server it talks to — the restart route simply is not there yet, and the
- * old code answered "未知的工作台路由" instead.
- */
-export const HOST_SKEW_HINT = '工作台的服务端是 dsh 启动时加载的旧版本（客户端已更新，服务端还没有）。请先用托盘菜单「重启 Web 服务」重启一次 dsh；之后这里就能面板内重启了。'
-
-/**
  * Whether a completed update check found something the user has not acted on.
  * Only this state (and check errors) outlives the auto-dismiss window: an
  * update banner must not disappear before it can be clicked.

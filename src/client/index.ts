@@ -33,7 +33,7 @@ import type { WorkbenchInjected } from './contract.ts'
 import type {
   WorkbenchConfigSaveResult, WorkbenchHealth, WorkbenchMarketDetail,
   WorkbenchMarketInstallRequest, WorkbenchMarketInstallResult, WorkbenchMarketSearch,
-  WorkbenchRestartPlan, WorkbenchRestartResult, WorkbenchSessionFollowupResult,
+  WorkbenchSessionFollowupResult,
   WorkbenchSkillImportRequest, WorkbenchSkillImportResult, WorkbenchSkillInstallRequest,
   WorkbenchSkillInstallResult, WorkbenchSkillList, WorkbenchSkillRemoveResult,
   WorkbenchSkillUpdateResult, WorkbenchState,
@@ -139,8 +139,6 @@ export function apply(ctx: ClientContext): void {
     checkUpdate: () => fetchJson<WorkbenchUpdateCheckResult>('/whaletv/workbench/update/check'),
     loadUpdateHistory: () => fetchJson<WorkbenchUpdateHistory>('/whaletv/workbench/update/history'),
     loadProgress: () => fetchJson<WorkbenchUpdateProgress>('/whaletv/workbench/update/progress'),
-    restartPlan: () => fetchJson<WorkbenchRestartPlan>('/whaletv/workbench/restart/plan'),
-    restart: () => fetchJson<WorkbenchRestartResult>('/whaletv/workbench/restart', { method: 'POST' }),
     skipUpdate: (sha: string) =>
       fetchJson<WorkbenchUpdateSkipResult>('/whaletv/workbench/update/skip', {
         method: 'POST',
