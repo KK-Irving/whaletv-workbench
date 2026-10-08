@@ -1,6 +1,6 @@
 # WhaleTV 工作台 Roadmap
 
-> 生成于 2026-09-03，基于 v0.6.0 代码现状审查 + 对 [dckxx/x-hub](https://github.com/dckxx/x-hub)（v0.6.5）的完整调研。
+> 生成于 2026-09-03，基于 v0.6.0 代码现状审查 + 对一款成熟同类桌面效率工作台的完整调研。
 > 每完成一项请在对应条目前打 ✅ 并同步更新 [CHANGELOG.md](../CHANGELOG.md) 与 [DESIGN.md](./DESIGN.md) §6 路线表。
 
 ## 执行状态（2026-09-30 晚，v0.7.7 @ dsh 0.2.0-rc.2）
@@ -36,12 +36,12 @@
 ## 0. 结论摘要（TL;DR）
 
 1. **当前最紧急**：代码对已链接的 dsh **0.1.6-alpha.2** 类型检查不过（`SessionListState.current` 已移除、`settings.plugin.item` slot 不在 SlotMap）。`pnpm run smoke` 全绿是假象——冒烟测试 mock 了契约，抓不到类型漂移。**对齐工作必须先做，且要建立防回归机制（CI + tsc 纳入冒烟链）。**
-2. **对标对象**：x-hub 是同题材（个人效率工作台）但不同基座（Tauri 桌面独立应用）的成熟实现，其**更新链路、主题/设计令牌体系、最近使用、全局搜索、扩展（技能）中心、版本化安装**六块能力对本项目有直接借鉴价值。
+2. **对标对象**：一款同题材（个人效率工作台）但不同基座（桌面独立应用）的成熟实现，其**更新链路、主题/设计令牌体系、最近使用、全局搜索、扩展（技能）中心、版本化安装**六块能力对本项目有直接借鉴价值。
 3. **主线节奏**：v0.6.1 止血对齐 → v0.7.0 更新体验 + 代码拆分 → v0.8.0 工作台能力 → v0.9.0 技能版本化/市场 → v1.0.0 稳定声明。
 
 ---
 
-## 1. x-hub 调研结论（借鉴来源）
+## 1. 外部参考调研结论（借鉴来源）
 
 ### 1.1 项目画像
 
@@ -51,21 +51,21 @@
 
 ### 1.2 工程亮点（值得抄的）
 
-| x-hub 做法 | 对本项目的启示 |
+| 外部参考做法 | 对本项目的启示 |
 | --- | --- |
 | **自研升级链路**：`update.json` + Ed25519 签名验签（内嵌公钥）→ semver 比较 + `minimumUpgradable` 跳级保护 → 静默检查（启动 5s + 每 4h）→ 流式下载 + sha256 校验 → 两步 rename 自替换 + 失败回滚 + 下次启动重试；支持「跳过此版本」 | 本项目「更新」按钮只有 git pull 一条路，无检查/无历史/无回滚。§3 P1 直接对标 |
 | **最近使用通栏**：按 `last_launched_at` 排序 Top 10 | 工作台条目目前无使用记录，加 usage.json 即可复刻 |
 | **全局搜索 Ctrl+K**：300ms 防抖，跨资源/笔记/待办，点击直达 + 3s 高亮 | 面板搜索已覆盖条目+技能，补键盘直达与唤起快捷键 |
 | **设计令牌体系**（DESIGN.md 为唯一基线）：三轴主题（模式×预设×强调色，`--accent` inline 注入 + `color-mix` 派生）、常驻表面伪毛玻璃静态烘焙（GPU 26%→低位）、只动画 transform/opacity、`prefers-reduced-motion` | 本项目面板样式可借 token 化思路做一次明暗对比度审计 |
-| **安全文档化**：ADR 0008 扩展内容跨源隔离（`xhub-ext.localhost` 与 `asset.localhost` 跨源，扩展读不到用户库）；URI 协议严格文件名校验防路径穿越；资产作用域只放行 4 个子目录 | 本项目 skills/import 的白名单思路与之一致，可把安全边界整理成 ADR 文档 |
+| **安全文档化**：扩展内容跨源隔离（扩展页面与资产走不同源，扩展读不到用户库）；URI 协议严格文件名校验防路径穿越；资产作用域只放行固定几个子目录 | 本项目 skills/import 的白名单思路与之一致，可把安全边界整理成 ADR 文档 |
 | **数据迁移纪律**：旧目录一次性迁移、待恢复数据启动时应用、幂等 SQL 修复图标路径 | 本项目已有 legacy config 迁移，同思路 |
 | **AGENTS.md 约定 + docs/adr/**：把跨 Agent 协作约定和架构决策落盘 | 本项目可补 ADR 目录记录「为什么配置放 $DSH_HOME」「provider rank 450」等既有决策 |
 
-### 1.3 x-hub 自身的问题（避免重蹈）
+### 1.3 该参考自身的问题（避免重蹈）
 
 - README 滞后于代码（账号/发布/平台额度等功能已远超「本地优先不上云」的定位表述）。
-- `is_position_on_screen` 用 ±10000 经验值模拟显示器边界（注释自认 Tauri 2 无枚举 API）——权衡可见，但属于脆弱点。
-- `RunEvent::Exit` 里 `std::process::exit(0)` 兜底——务实但跳过所有清理。
+- 用 ±10000 经验值模拟显示器边界兜底判定——权衡可见，但属于脆弱点。
+- 退出事件里直接 `exit(0)` 兜底——务实但跳过所有清理。
 - **启示**：功能扩张快于文档时，README/DESIGN 会失真；本项目 README（写 v0.5.1）与 package.json（0.6.0）已经出现同类漂移，先修。
 
 ---
@@ -113,9 +113,9 @@
 | 6 | 清理 §2.2-5 的死代码与两套 `ctx.get` 写法 | grep 无残留 |
 | 7 | `needRestart` 精确化（diff 文件集判定） | 仅服务端变更时提示重启 |
 
-### P1 — 更新体验，对标 x-hub 升级链路（v0.7.0）
+### P1 — 更新体验，对标成熟升级链路（v0.7.0）
 
-| # | 事项 | 参考 x-hub |
+| # | 事项 | 外部参考 |
 | --- | --- | --- |
 | 8 | **「检查更新」与「更新」分离**：`git fetch` + ahead/behind + 新提交列表（`git log --oneline`），面板展示落后 N 提交再决定 | 静默检查 + 更新弹窗（版本/说明/体积） |
 | 9 | **更新历史与回滚**：每次更新追加 `{ time, before, after, ok, log }` 到 `$DSH_HOME/whaletv-workbench/updates.json`，面板展示最近 10 条；pull 后 build 失败时提供 `git reset --hard <before>` 一键回滚 | 失败自动回滚 + 下次重试 |
@@ -124,7 +124,7 @@
 
 ### P2 — 工作台能力扩展（v0.8.0）
 
-| # | 事项 | 参考 x-hub / 备注 |
+| # | 事项 | 外部参考 / 备注 |
 | --- | --- | --- |
 | 12 | **最近使用通栏**：Host 记录条目打开次数/时间（`usage.json`），面板顶部 Top 10，支持清除 | `last_launched_at` 排序 |
 | 13 | **快捷键唤起**：页面级快捷键（如 `Alt+W`）开关面板；调研 dsh client 是否有全局快捷键面可挂 | Ctrl+K / Ctrl+Shift+Space |
@@ -133,11 +133,11 @@
 | 16 | **条目健康检查**：url 类条目 HEAD 探测（Host 侧执行避免 CORS），失效显示徽标；path 类条目存在性探测 + 「打开所在目录」 | DESIGN.md v0.5 规划的应用健康检查 |
 | 17 | **条目图标**：url 自动抓 favicon（Host 侧代理下载存 `$DSH_HOME/whaletv-workbench/icons/`），或 emoji 兜底 | 速达图标提取 |
 | 18 | **locale 字典**接入 dsh locale 系统（zh/en），面板文案全部走字典 | DESIGN.md v0.5 规划 |
-| 19 | **面板主题审计**：对照 dsh `--dsw-alias-*` token 做明暗两态对比度检查；借 x-hub 思路把面板色值收敛成小型 token 集 | 三轴主题 / DESIGN.md 基线 |
+| 19 | **面板主题审计**：对照 dsh `--dsw-alias-*` token 做明暗两态对比度检查；借外部参考思路把面板色值收敛成小型 token 集 | 三轴主题 / DESIGN.md 基线 |
 
 ### P3 — 技能管理演进（v0.9.0）
 
-| # | 事项 | 参考 x-hub / 备注 |
+| # | 事项 | 外部参考 / 备注 |
 | --- | --- | --- |
 | 20 | **Skill 版本化**：`installedSkills` 从 `string[]` 升级为 `{ name, sourceUrl, resolvedSha, installedAt }[]`（迁移旧数据）；Git 导入时在 staging `git rev-parse HEAD` 记录来源 SHA | 扩展中心 manifest 思路；DESIGN.md v0.6 规划 |
 | 21 | **已装技能「检查更新」**：对来源为 Git 的技能 re-clone 对比 SHA，变化则一键覆盖更新（保留用户后改内容前先 diff 提示） | `update_extension` |
@@ -153,7 +153,7 @@
 | 26 | **Panel 拆分**：`WorkbenchPanel.tsx` → `SkillsSection.tsx` / `ItemForm.tsx` / `UpdateFooter.tsx` | 同上，UI 侧 |
 | 27 | **dsh 兼容层集中**：所有对 dsh API 的类型断言/取值收口到 `src/compat.ts`（Host）+ `src/client/compat.ts`，升级 dsh 只改两处 | §2.2-1 的长期解法 |
 | 28 | **冒烟增强**：git import 的 URL 白名单 / ref 注入拒绝 / staging 清理路径（已在 smoke-host 覆盖）；✅ `node --test` 结构化单测已落地（0.8.18，`scripts/unit.mjs` 覆盖纯版本比较逻辑，免构建跑在 fresh checkout） | 现有 smoke 为 mock 契约；纯逻辑改走 node --test |
-| 29 | ✅ **ADR 目录**：`docs/adr/0001-config-and-state-in-dsh-home.md`、`0002-skill-provider-rank-450.md`、`0003-restart-is-manual-on-desktop.md`（原计划的 `0003-update-via-git-pull` 未写，更新通道的决策可另起 `0004`——0.8.1 起 tarball 通道改用直连 `pnpm add`，0.8.10 又加了 pnpm 构建白名单自动授权，两件事都值得留痕） | 学 x-hub 的决策留痕 |
+| 29 | ✅ **ADR 目录**：`docs/adr/0001-config-and-state-in-dsh-home.md`、`0002-skill-provider-rank-450.md`、`0003-restart-is-manual-on-desktop.md`（原计划的 `0003-update-via-git-pull` 未写，更新通道的决策可另起 `0004`——0.8.1 起 tarball 通道改用直连 `pnpm add`，0.8.10 又加了 pnpm 构建白名单自动授权，两件事都值得留痕） | 外部参考的决策留痕实践 |
 | 30 | **发布工程**：打 tag + GitHub Release；check-version 脚本（P0-5）扩展为发版前检查 | 当前只有 main 裸提交 |
 
 ### 里程碑与节奏
@@ -168,12 +168,12 @@ v1.0.0  API 稳定声明 + 支持 dsh 版本矩阵 + 文档齐备 + CI 长绿
 
 ### 明确不做（Negative scope）
 
-- 不做剪贴板历史 / 系统监视 / 倒计时浮窗等「桌面应用独占」能力——它们属于 x-hub 的宿主形态优势，塞进 web 面板收益低。
+- 不做剪贴板历史 / 系统监视 / 倒计时浮窗等「桌面应用独占」能力——它们属于独立桌面应用的宿主形态优势，塞进 web 面板收益低。
 - 不做扩展二次开发系统——dsh 的插件/技能体系本身就是这层，避免重复造。
 - 不引入前端框架级状态库——`dsh-client-store` 的 defineStore 已够用，与 dsh 对齐成本优先。
 
 ---
 
-## 4. 与 x-hub 的长期关系
+## 4. 与外部参考的长期关系
 
-x-hub 是「独立桌面应用」形态的极限样本，本项目是「嵌入 AI Harness 的面板」形态。两者不合并、但保持**单向借鉴**：更新链路（P1）、使用统计（P2）、技能/扩展运营（P3）三块 x-hub 已验证的设计可直接移植；反之本项目的 **skill git 导入三形态识别、会话内联引用**是 x-hub 没有的，若其扩展系统需要「从 git 装 skill」也可反向参考。
+外部参考是「独立桌面应用」形态的极限样本，本项目是「嵌入 AI Harness 的面板」形态。两者定位不同、不合并，仅保持**单向借鉴**：更新链路（P1）、使用统计（P2）、技能/扩展运营（P3）三块已在成熟实现里验证过的设计可直接移植到本项目；而本项目的 **skill git 导入三形态识别、会话内联引用**则是其所没有的、属于 Harness 面板形态的独有能力。
