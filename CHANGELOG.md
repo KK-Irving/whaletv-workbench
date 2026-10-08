@@ -2,6 +2,37 @@
 
 Notable changes per version. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) loosely; pre-1.0 minor bumps carry feature-level changes because the API surface is still shaping up.
 
+## 0.8.18 — 2026-10-08
+
+### Fixed
+
+- **`isSemverGt` 的预发布版本比较纠错（影响 tarball 更新通道的「检查更新」）。**
+  旧实现把整段预发布标签当字符串字典序比较，导致两处误判：
+  - **数字标识符错序**：`1.0.0-rc.2` 被判为比 `1.0.0-rc.10` 新（`'rc.2' > 'rc.10'`
+    字典序为真）——`rc` 系列只要进位到两位数就比较翻车；
+  - **正式版与预发布倒置**：`1.0.0` 被判为**不**比 `1.0.0-rc.1` 新（注释写的是
+    「正式版高于自身预发布」，代码却做反了），`1.0.0-rc.1` 反被判为比 `1.0.0` 新。
+  由于 tarball 通道按本插件 `package.json` 版本与更新仓库版本比对，而对齐的 dsh
+  走 `-rc.N` 预发布号，这条比较的边界必须准确。现按 SemVer §11 实现：发行三元组
+  逐段数值比较，预发布尾段逐标识符比较（纯数字标识符按**数值**排序，故 `rc.2`
+  排在 `rc.10` 之前；数字标识符低于字母数字标识符；标识符更长者更高），正式版恒高于
+  其任何预发布；构建元数据（`+…`）不参与排序。
+
+### Added
+
+- **纯函数单测（`node --test`，`pnpm run test:unit`）。** 新增
+  `scripts/unit.mjs`，覆盖版本比较的正式/预发布/混合标识符/构建元数据/畸形输入边界，
+  以及 `parseVersionField` 的提取与拒绝路径。与三个 mock 驱动的 smoke 不同，本套件
+  **不需要构建产物、也不需要链接 `@deepseek-ai/*` peer**：它直接导入新拆出的零依赖
+  叶子模块 `src/semver.ts`（Node 做类型擦除），因此在全新 CI 检出与开发机上行为一致。
+  已前置进 `smoke` / `smoke:ci` 链（在 lint 之后、脚本 smoke 之前）。
+
+### Changed
+
+- **版本比较逻辑抽成独立叶子模块 `src/semver.ts`**（`isSemverGt` /
+  `parseVersionField`），不引入任何 node builtin 或 dsh 依赖，供单测直接导入；
+  `src/update.ts` 从该模块导入并原样 re-export，对外接口与行为（除上述纠错外）不变。
+
 ## 0.8.17 — 2026-09-30
 
 ### Added

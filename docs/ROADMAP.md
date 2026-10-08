@@ -20,7 +20,7 @@
 2. **[高] 更新进度实时反馈**：dsh 0.2.0 plugin-manager 会 emit `plugin-manager/install-state` 事件（installing/applying 阶段 + registry 重试），Host 订阅后推给面板——当前点「更新」后是黑盒等待
 3. **[中] 面板内完整更新历史列表**（updates.json 数据已在，只差 UI）
 4. **[中] compat.ts 收口（P4-27）**：pluginManager/settings/mainView 等结构化访问散在各处，收口后对齐只需改一处
-5. **[中] 纯函数单测**：`isSemverGt` / `suggestGitName` / `resolveSkillSource` 均为纯逻辑，`node --test` 即可覆盖（含预发布版本边界）
+5. ✅ **[中] 纯函数单测（0.8.18 落地）**：`scripts/unit.mjs`（`node --test`）覆盖 `isSemverGt` / `parseVersionField` 的正式/预发布/混合标识符/构建元数据/畸形输入边界，直接导入零依赖叶子模块 `src/semver.ts`——免构建、免 peer，全新 CI 检出即可跑。顺带修掉 `isSemverGt` 的预发布比较两处错序（数字标识符字典序、正式版与预发布倒置）。`suggestGitName`（嵌在 `.tsx`，依赖 React）/ `resolveSkillSource`（吃 `Stats`，触盘）非纯逻辑，留待后续抽离后再覆盖
 6. **[低] locale 字典（P2-18）、技能市场源（P3-22）、MCP 快捷卡片（P3-24）、favicon retention、/health 补私网防护（与 /icon 对齐）**
 
 **剩余（原清单）**：
@@ -152,7 +152,7 @@
 | 25 | **Host 拆分**：`src/index.ts` → `routes.ts` / `skills.ts`（provider+import）/ `update.ts` / `config.ts`，单文件 <500 行 | 缩小 dsh 对齐 diff 面积 |
 | 26 | **Panel 拆分**：`WorkbenchPanel.tsx` → `SkillsSection.tsx` / `ItemForm.tsx` / `UpdateFooter.tsx` | 同上，UI 侧 |
 | 27 | **dsh 兼容层集中**：所有对 dsh API 的类型断言/取值收口到 `src/compat.ts`（Host）+ `src/client/compat.ts`，升级 dsh 只改两处 | §2.2-1 的长期解法 |
-| 28 | **冒烟增强**：git import 的 URL 白名单 / ref 注入拒绝 / staging 清理路径补 mock 测试；评估 `node --test` 结构化 | 现有 smoke 不覆盖安全边界 |
+| 28 | **冒烟增强**：git import 的 URL 白名单 / ref 注入拒绝 / staging 清理路径（已在 smoke-host 覆盖）；✅ `node --test` 结构化单测已落地（0.8.18，`scripts/unit.mjs` 覆盖纯版本比较逻辑，免构建跑在 fresh checkout） | 现有 smoke 为 mock 契约；纯逻辑改走 node --test |
 | 29 | ✅ **ADR 目录**：`docs/adr/0001-config-and-state-in-dsh-home.md`、`0002-skill-provider-rank-450.md`、`0003-restart-is-manual-on-desktop.md`（原计划的 `0003-update-via-git-pull` 未写，更新通道的决策可另起 `0004`——0.8.1 起 tarball 通道改用直连 `pnpm add`，0.8.10 又加了 pnpm 构建白名单自动授权，两件事都值得留痕） | 学 x-hub 的决策留痕 |
 | 30 | **发布工程**：打 tag + GitHub Release；check-version 脚本（P0-5）扩展为发版前检查 | 当前只有 main 裸提交 |
 

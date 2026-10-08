@@ -1,6 +1,6 @@
 {
   "name": "whaletv-workbench",
-  "version": "0.8.17",
+  "version": "0.8.18",
   "private": true,
   "description": "WhaleTV 工作台插件：网页/文档/应用/技能一键跳转 + 点击即用的自更新，热插入 DeepSeek Harness (dsh) Web 界面",
   "license": "MIT",
@@ -45,8 +45,9 @@
     "check:lib": "node scripts/check-lib-drift.mjs",
     "check:types": "tsc --noEmit",
     "lint": "eslint .",
-    "smoke": "pnpm run check:version && pnpm run check:lib && pnpm run check:types && pnpm run lint && node scripts/smoke-client.mjs && node scripts/smoke-apply.mjs && node scripts/smoke-host.mjs",
-    "smoke:ci": "pnpm run check:version && pnpm run check:lib && pnpm run lint && node scripts/smoke-client.mjs && node scripts/smoke-apply.mjs && node scripts/smoke-host.mjs",
+    "test:unit": "node --experimental-strip-types scripts/unit.mjs",
+    "smoke": "pnpm run check:version && pnpm run check:lib && pnpm run check:types && pnpm run lint && pnpm run test:unit && node scripts/smoke-client.mjs && node scripts/smoke-apply.mjs && node scripts/smoke-host.mjs",
+    "smoke:ci": "pnpm run check:version && pnpm run check:lib && pnpm run lint && pnpm run test:unit && node scripts/smoke-client.mjs && node scripts/smoke-apply.mjs && node scripts/smoke-host.mjs",
     "link:harness": "node scripts/link-harness-deps.mjs",
     "install:profile": "node scripts/install-profile.mjs"
   },

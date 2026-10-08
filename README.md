@@ -135,6 +135,7 @@ node scripts/install-profile.mjs web
 │   ├── check-version.mjs   # 版本三处一致性校验
 │   ├── check-lib-drift.mjs # lib/ 漂移门禁（提交的产物必须等于一次全新构建）
 │   ├── install-profile.mjs     # 一键安装到 dsh web profile
+│   ├── unit.mjs                # 纯函数单测（node --test，免构建 / 免 peer）
 │   ├── smoke-client.mjs        # client bundle 冒烟测试
 │   ├── smoke-apply.mjs         # apply() 注册契约测试
 │   └── smoke-host.mjs          # Host 路由 + 安全边界测试
@@ -142,6 +143,7 @@ node scripts/install-profile.mjs web
 └── src/
     ├── index.ts            # Host 入口：Config + apply + 路由分发
     ├── host-plumbing.ts    # 共享管道（exec/git/JSON/路径）
+    ├── semver.ts           # 版本比较纯函数（零依赖叶子，供单测直接导入）
     ├── update.ts           # 更新域（git + tarball 双通道 + 历史 + 回滚）
     ├── skills.ts           # 技能域（provider + 导入 + 版本记录）
     ├── extras.ts           # 附加域（最近使用 + 可达性 + favicon）
@@ -195,7 +197,7 @@ node scripts/install-profile.mjs web
 
 ## 版本
 
-当前版本 **v0.8.17**（对齐 dsh 0.2.0-rc.2）。每次发版的变更详见 [CHANGELOG.md](./CHANGELOG.md)。面板顶部会显示实际运行的版本号（读自 `package.json`），跟这里对齐即可（`pnpm run check:version` 会在冒烟链里校验三处一致）。
+当前版本 **v0.8.18**（对齐 dsh 0.2.0-rc.2）。每次发版的变更详见 [CHANGELOG.md](./CHANGELOG.md)。面板顶部会显示实际运行的版本号（读自 `package.json`），跟这里对齐即可（`pnpm run check:version` 会在冒烟链里校验三处一致）。
 
 ## License
 

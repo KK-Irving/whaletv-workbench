@@ -15,6 +15,10 @@ import {
   CLIENT_ID, DSH_HOME, PACKAGE_DIR, WORKBENCH_STATE_DIR, run, git, truncate, readVersion,
 } from './host-plumbing.ts'
 import { approvalKeysFor, grantBuildApproval, isBuildApprovalRefusal, resolveProfileDir } from './pnpm-approval.ts'
+// Pure version helpers live in a dependency-free leaf module so the unit
+// suite can exercise their pre-release boundaries without a build or the
+// linked dsh peers. Re-exported below to keep this module's surface stable.
+import { isSemverGt, parseVersionField } from './semver.ts'
 
 /** Rolling self-update history (roadmap P1-9): the last N update attempts. */
 const UPDATE_HISTORY_PATH = join(WORKBENCH_STATE_DIR, 'updates.json')
@@ -223,33 +227,6 @@ async function fetchLatestTarballVersion(repo: string): Promise<{ version?: stri
     }
   }
   return { attempts }
-}
-
-/** Pull the semver `version` field out of a package.json document. */
-function parseVersionField(packageJson: string): string | undefined {
-  try {
-    const version = (JSON.parse(packageJson) as { version?: unknown }).version
-    return typeof version === 'string' && /^\d+\.\d+\.\d+/.test(version) ? version : undefined
-  } catch {
-    return undefined
-  }
-}
-
-/** Whether `latest` is strictly newer than `installed` (x.y.z[, -prerelease] aware). */
-function isSemverGt(latest: string, installed: string): boolean {
-  const parse = (value: string): [number, number, number, string] => {
-    const [core, pre = ''] = value.split('-')
-    const [major = 0, minor = 0, patch = 0] = core.split('.').map(part => Number.parseInt(part, 10) || 0)
-    return [major, minor, patch, pre]
-  }
-  const [lm, ln, lp, lpre] = parse(latest)
-  const [im, inn, ip, ipre] = parse(installed)
-  if (lm !== im) return lm > im
-  if (ln !== inn) return ln > inn
-  if (lp !== ip) return lp > ip
-  // A release outranks its own prerelease prefixes; different prefixes compare lexically.
-  if (lpre !== ipre) return lpre !== '' && (ipre === '' || lpre > ipre)
-  return false
 }
 
 /**
